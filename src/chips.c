@@ -102,6 +102,9 @@ int qb_get_battery_info(struct qb_manager *cm)
                     next.health, sizeof(next.health)) < 0)
         goto invalid;
 
+    if (next.capacity < 0 || next.capacity > 100)
+        goto invalid;
+
     if (!stat("/var/dbg_vbat", &st)) {
         if (qb_read_int("/var/", "dbg_vbat", &debug_value) < 0)
             goto invalid;

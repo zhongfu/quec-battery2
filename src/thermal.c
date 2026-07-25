@@ -252,6 +252,56 @@ void qb_update_charge_limits(struct qb_manager *cm)
         qb_apply_thermal_limits(cm, 4180, 0, QB_TEMP_OVERHEAT);
 }
 
+bool qb_update_capacity_charge_limit(struct qb_manager *cm)
+{
+    bool previous_hold = cm->capacity_charge_hold;
+    int resume_percent;
+
+    if (cm->charge_limit_percent == 0 || qb_battery_absent(cm)) {
+        cm->capacity_charge_hold = false;
+        cm->capacity_stop_samples = 0;
+        cm->capacity_resume_samples = 0;
+        return previous_hold;
+    }
+
+    if (qb_battery_present(cm) && cm->battery.telemetry_valid) {
+        resume_percent = cm->charge_limit_percent -
+                         QB_CAPACITY_LIMIT_HYSTERESIS;
+        if (resume_percent < 0)
+            resume_percent = 0;
+
+        if (!cm->capacity_charge_hold) {
+            cm->capacity_resume_samples = 0;
+            if (cm->battery.capacity >= cm->charge_limit_percent) {
+                if (cm->capacity_stop_samples < QB_CAPACITY_LIMIT_SAMPLES)
+                    cm->capacity_stop_samples++;
+                if (cm->capacity_stop_samples == QB_CAPACITY_LIMIT_SAMPLES) {
+                    cm->capacity_charge_hold = true;
+                    cm->capacity_stop_samples = 0;
+                }
+            } else {
+                cm->capacity_stop_samples = 0;
+            }
+        } else {
+            cm->capacity_stop_samples = 0;
+            if (cm->battery.capacity <= resume_percent) {
+                if (cm->capacity_resume_samples < QB_CAPACITY_LIMIT_SAMPLES)
+                    cm->capacity_resume_samples++;
+                if (cm->capacity_resume_samples == QB_CAPACITY_LIMIT_SAMPLES) {
+                    cm->capacity_charge_hold = false;
+                    cm->capacity_resume_samples = 0;
+                }
+            } else {
+                cm->capacity_resume_samples = 0;
+            }
+        }
+    }
+
+    if (cm->capacity_charge_hold)
+        cm->charge_current_ma = 0;
+    return cm->capacity_charge_hold != previous_hold;
+}
+
 int qb_set_battery_cycle(struct qb_manager *cm)
 {
     struct qb_charger_config config = {0};
@@ -461,6 +511,7 @@ void *qb_gauge_monitor(void *arg)
         bool danger = false;
         bool gauge_reset;
         int battery_info_status;
+        bool capacity_changed;
         int presence_status;
         time_t now;
 
@@ -489,6 +540,18 @@ void *qb_gauge_monitor(void *arg)
         if (qb_battery_absent(cm))
             cm->battery.temp_decic = -5;
         qb_update_charge_limits(cm);
+        capacity_changed = qb_update_capacity_charge_limit(cm);
+        if (capacity_changed) {
+            QBLOG(0x9ed, "capacity charge hold:%d capacity:%d limit:%d\n",
+                  cm->capacity_charge_hold, cm->battery.capacity,
+                  cm->charge_limit_percent);
+            if (qb_battery_present(cm) && qb_adapter_online(cm)) {
+                pthread_mutex_lock(&cm->reset_mutex);
+                qb_reset_charge_state(cm);
+                cm->work_mode = QB_MODE_RESELECT;
+                pthread_mutex_unlock(&cm->reset_mutex);
+            }
+        }
 
         QBLOG(0x9ed, "capacity:%d temp:%d current:%d mA vbat:%d mV full:%d mV "
               "charge:%d mA present:%d temp_status:%d mode:%d work_mode:%d",

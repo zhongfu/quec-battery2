@@ -346,7 +346,8 @@ static void test_config_loader(void)
           "\toption min_shutdown_mv \"3350\"\n"
           "\toption max_pd_vbus_mv '9600'\n"
           "\toption pd_full_mv '4025'\n"
-          "\toption charge_limit_mv '4050'\n", fp);
+          "\toption charge_limit_mv '4050'\n"
+          "\toption charge_limit_percent '80'\n", fp);
     fclose(fp);
     assert(qb_load_config_file(&cm, path) == 0);
     unlink(path);
@@ -356,6 +357,7 @@ static void test_config_loader(void)
     assert(cm.pd_full_mv == 4025);
     assert(cm.charge_limit_mv == 4050);
     assert(cm.full_voltage_mv == 4050);
+    assert(cm.charge_limit_percent == 80);
 }
 
 static void test_config_bounds_and_helpers(void)
@@ -378,7 +380,8 @@ static void test_config_bounds_and_helpers(void)
           "\toption min_shutdown_mv '5000'\n"
           "\toption max_pd_vbus_mv '12000'\n"
           "\toption pd_full_mv '1000'\n"
-          "\toption charge_limit_mv '5000'\n", fp);
+          "\toption charge_limit_mv '5000'\n"
+          "\toption charge_limit_percent '120'\n", fp);
     fclose(fp);
     assert(qb_load_config_file(&cm, path) == 0);
     assert(cm.max_current_ma == QB_STOCK_MAX_CURRENT_MA);
@@ -387,12 +390,14 @@ static void test_config_bounds_and_helpers(void)
     assert(cm.pd_full_mv == QB_MIN_PD_FULL_MV);
     assert(cm.charge_limit_mv == QB_MAX_CHARGE_LIMIT_MV);
     assert(cm.full_voltage_mv == QB_MAX_CHARGE_LIMIT_MV);
+    assert(cm.charge_limit_percent == 100);
 
     cm.max_current_ma = QB_STOCK_MAX_CURRENT_MA;
     cm.min_shutdown_mv = QB_STOCK_MIN_SHUTDOWN_MV;
     cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
     cm.pd_full_mv = QB_STOCK_PD_FULL_MV;
     cm.charge_limit_mv = 0;
+    cm.charge_limit_percent = 0;
     cm.full_voltage_mv = 4400;
     fp = fopen(path, "w");
     assert(fp != NULL);
@@ -401,7 +406,8 @@ static void test_config_bounds_and_helpers(void)
           "\toption min_shutdown_mv 'invalid'\n"
           "\toption max_pd_vbus_mv '5000'\n"
           "\toption pd_full_mv '4050'\n"
-          "\toption charge_limit_mv '-1'\n", fp);
+          "\toption charge_limit_mv '-1'\n"
+          "\toption charge_limit_percent '-1'\n", fp);
     fclose(fp);
     assert(qb_load_config_file(&cm, path) == 0);
     unlink(path);
@@ -411,6 +417,7 @@ static void test_config_bounds_and_helpers(void)
     assert(cm.pd_full_mv == 4050);
     assert(cm.charge_limit_mv == 0);
     assert(cm.full_voltage_mv == 4400);
+    assert(cm.charge_limit_percent == 0);
     assert(qb_limit_charge_current(&cm, 5300) == 0);
     assert(!qb_pps_enabled(&cm));
     assert(qb_limit_pps_voltage(&cm, 8000) == 0);
@@ -450,6 +457,75 @@ static void test_config_bounds_and_helpers(void)
     policy.pps_voltage_mv = 9000;
     qb_pump_pps_control(&policy);
     assert(policy.pps_voltage_mv == 9000);
+}
+
+static void test_capacity_charge_limit(void)
+{
+    struct qb_manager cm;
+
+    memset(&cm, 0, sizeof(cm));
+    cm.max_current_ma = QB_STOCK_MAX_CURRENT_MA;
+    cm.charge_limit_mv = 4000;
+    cm.charge_limit_percent = 80;
+    cm.battery.presence = QB_BATTERY_PRESENT;
+    cm.battery.telemetry_valid = true;
+    cm.battery.capacity = 80;
+    cm.battery.temp_decic = 200;
+    cm.buck.vbat_adc_mv = 3900;
+
+    cm.charge_current_ma = 1000;
+    assert(!qb_update_capacity_charge_limit(&cm));
+    assert(!cm.capacity_charge_hold);
+    assert(!qb_update_capacity_charge_limit(&cm));
+    assert(!cm.capacity_charge_hold);
+    assert(qb_update_capacity_charge_limit(&cm));
+    assert(cm.capacity_charge_hold);
+    assert(cm.charge_current_ma == 0);
+
+    cm.battery.capacity = 78;
+    cm.charge_current_ma = 1000;
+    assert(!qb_update_capacity_charge_limit(&cm));
+    assert(cm.capacity_charge_hold && cm.charge_current_ma == 0);
+    cm.battery.capacity = 77;
+    cm.charge_current_ma = 1000;
+    assert(!qb_update_capacity_charge_limit(&cm));
+    cm.charge_current_ma = 1000;
+    assert(!qb_update_capacity_charge_limit(&cm));
+    cm.charge_current_ma = 1000;
+    assert(qb_update_capacity_charge_limit(&cm));
+    assert(!cm.capacity_charge_hold);
+    assert(cm.charge_current_ma == 1000);
+
+    cm.battery.capacity = 80;
+    assert(!qb_update_capacity_charge_limit(&cm));
+    cm.battery.capacity = 79;
+    assert(!qb_update_capacity_charge_limit(&cm));
+    assert(cm.capacity_stop_samples == 0);
+
+    cm.capacity_charge_hold = true;
+    cm.battery.presence = QB_BATTERY_UNKNOWN;
+    cm.charge_current_ma = 1000;
+    assert(!qb_update_capacity_charge_limit(&cm));
+    assert(cm.capacity_charge_hold && cm.charge_current_ma == 0);
+    cm.battery.presence = QB_BATTERY_ABSENT;
+    assert(qb_update_capacity_charge_limit(&cm));
+    assert(!cm.capacity_charge_hold);
+
+    cm.battery.presence = QB_BATTERY_PRESENT;
+    cm.capacity_charge_hold = true;
+    cm.charge_limit_percent = 0;
+    assert(qb_update_capacity_charge_limit(&cm));
+    assert(!cm.capacity_charge_hold);
+
+    cm.charge_limit_percent = 80;
+    cm.capacity_charge_hold = true;
+    cm.battery.capacity = 80;
+    qb_power_limit_state = 0;
+    qb_update_charge_limits(&cm);
+    assert(cm.full_voltage_mv == 4000);
+    assert(cm.charge_current_ma == QB_STOCK_MAX_CURRENT_MA);
+    assert(!qb_update_capacity_charge_limit(&cm));
+    assert(cm.charge_current_ma == 0);
 }
 
 static void test_charge_voltage_limit(void)
@@ -713,6 +789,7 @@ int main(void)
     test_sysfs_integer_validation();
     test_watchdog_socket_connect();
     test_battery_presence_policy();
+    test_capacity_charge_limit();
     test_charge_voltage_limit();
     test_initial_temperature_policy();
     test_temperature_policy_matrix();

@@ -19,6 +19,8 @@
 #define QB_STOCK_PD_FULL_MV 4200
 #define QB_MIN_CHARGE_LIMIT_MV 3800
 #define QB_MAX_CHARGE_LIMIT_MV 4200
+#define QB_CAPACITY_LIMIT_HYSTERESIS 3
+#define QB_CAPACITY_LIMIT_SAMPLES 3
 
 #define QB_LOG_FLAG "/tmp/quec_battery_log"
 #define QB_UCI_CONFIG "/etc/config/qlbattery"
@@ -176,6 +178,7 @@ struct qb_manager {
     int max_pd_vbus_mv;
 
     int charge_limit_mv;
+    int charge_limit_percent;
     struct qb_pd_port pda;
     struct qb_pd_port pdb;
     struct qb_sgm41542 buck;
@@ -215,6 +218,9 @@ struct qb_manager {
     int buck_error_count;
     int programmed_buck_voltage_mv;
     int programmed_pump_voltage_mv;
+    bool capacity_charge_hold;
+    unsigned capacity_stop_samples;
+    unsigned capacity_resume_samples;
 
     pthread_mutex_t reset_mutex;
     struct qb_event_queue events;
@@ -311,6 +317,7 @@ int qb_sgm41600_voltage_registers(int target_mv, unsigned *bat_ovp,
                                   unsigned *regulation);
 int qb_update_register(const char *dir, unsigned reg, unsigned mask,
                        unsigned value);
+bool qb_update_capacity_charge_limit(struct qb_manager *cm);
 void qb_update_charge_limits(struct qb_manager *cm);
 void qb_init_temp_status(struct qb_manager *cm);
 int qb_set_battery_cycle(struct qb_manager *cm);

@@ -91,6 +91,7 @@ This fork makes the stock charging settings and the optional voltage limit in
 | `max_pd_vbus_mv` | 9800 mV | 0–9800 mV | Caps every PPS voltage request; values below 6600 mV disable PPS |
 | `pd_full_mv` | 4200 mV | 3401–4200 mV | Sets PPS eligibility and the pump-to-buck transition threshold |
 | `charge_limit_mv` | 0 (disabled) | 3800–4200 mV | Applies a non-terminating CV ceiling to buck charging and coordinated SGM41600/PPS voltage regulation |
+| `charge_limit_percent` | 0 (disabled) | 0–100% | Holds battery charge current at zero after three samples at the limit; resumes after three samples at least three percentage points lower |
 
 Values outside the ranges are clamped toward the safe limit. A malformed
 integer is ignored, leaving the prior/default value in effect. Detailed logging
@@ -101,11 +102,12 @@ current and PPS voltage cannot exceed the stock maxima, shutdown cannot occur
 below the stock floor, and PPS cannot remain active above the stock full
 threshold.
 
-For example, a 4.00 V charge ceiling:
+For example, a 4.00 V ceiling combined with an 80% capacity limit:
 
 ```uci
 config battery 'settings'
 	option charge_limit_mv '4000'
+	option charge_limit_percent '80'
 ```
 
 When enabled, the daemon disables the SGM41542S termination bit and programs
@@ -115,6 +117,14 @@ limits. For PPS charging it programs SGM41600 `BAT_OVP` and `VBAT_REG` with a
 the PPS request when battery voltage reaches the same target. SGM41600
 regulation is quantized downward to its 25 mV protection steps; the SGM41542S
 uses its 10 mV CV steps.
+
+The capacity limit is evaluated only from complete, range-checked gauge
+snapshots. Three consecutive samples are required both to enter the hold and
+to resume, with a fixed three-percentage-point hysteresis. Entering the hold
+disables the charge pump, returns PD to 5 V, and leaves the SGM41542S input
+power path available for the system while battery charging is disabled. The
+voltage and capacity limits compose independently; whichever becomes
+restrictive first controls battery current.
 
 ## Enhanced safety behavior
 
