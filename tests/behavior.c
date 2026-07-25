@@ -452,9 +452,9 @@ static void test_initial_temperature_policy(void)
         {149, QB_TEMP_COOL, 4400, 1060},
         {150, QB_TEMP_NORMAL, 4400, 5300},
         {449, QB_TEMP_NORMAL, 4400, 5300},
-        {450, QB_TEMP_HOT, 4400, 1060},
-        {599, QB_TEMP_HOT, 4400, 1060},
-        {600, QB_TEMP_OVERHEAT, 4400, 0},
+        {450, QB_TEMP_HOT, 4180, 1060},
+        {599, QB_TEMP_HOT, 4180, 1060},
+        {600, QB_TEMP_OVERHEAT, 4180, 0},
     };
 
     qb_power_limit_state = 0;
@@ -472,6 +472,14 @@ static void test_initial_temperature_policy(void)
         assert(cm.full_voltage_mv == cases[i].full_mv);
         assert(cm.charge_current_ma == cases[i].current_ma);
         assert(cm.v42_capacity == 86);
+
+        cm.battery.cycle_count = 600;
+        cm.battery.temp_decic = 200;
+        qb_init_temp_status(&cm);
+        assert(cm.full_voltage_mv == 4250);
+        cm.battery.temp_decic = 500;
+        qb_init_temp_status(&cm);
+        assert(cm.full_voltage_mv == 4180);
     }
 }
 

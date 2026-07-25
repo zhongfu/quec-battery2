@@ -144,6 +144,13 @@ attempts, a charger watchdog fault, or ten consecutive feed/read failures
 request a reboot. Signal ownership remains in `main` instead of being replaced
 by the worker thread.
 
+### Startup thermal ceiling
+
+Startup now retains the stricter of the temperature voltage ceiling and the
+cycle-aging ceiling, using the same minimum-of-limits rule as steady-state
+policy. A hot battery therefore starts at 4180 mV rather than being temporarily
+overwritten by a 4400 mV low-cycle ceiling.
+
 ## Behavior reference
 
 See [`docs/original-daemon.md`](docs/original-daemon.md) before changing charging

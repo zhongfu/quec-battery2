@@ -217,8 +217,6 @@ void qb_init_temp_status(struct qb_manager *cm)
         qb_apply_thermal_limits(cm, 4180, 1060, QB_TEMP_HOT);
     else
         qb_apply_thermal_limits(cm, 4180, 0, QB_TEMP_OVERHEAT);
-
-    cm->full_voltage_mv = qb_cycle_voltage_limit(cm->battery.cycle_count);
 }
 
 void qb_update_charge_limits(struct qb_manager *cm)
