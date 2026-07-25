@@ -118,6 +118,13 @@ Failure at initial negotiation or during a later voltage adjustment disables
 the pump and falls back to the port's 5 V buck path. This uses the one-second
 settling delay already present in the stock sequence; it adds no new delay.
 
+### Fixed-current floor
+
+The SGM41542S current ramp is constrained to the inclusive range from zero to
+the active policy current. Repeated VBUS droop can reduce charging to the
+device-supported zero-current setting, but can no longer generate negative
+`ichrg_curr` writes.
+
 ## Behavior reference
 
 See [`docs/original-daemon.md`](docs/original-daemon.md) before changing charging

@@ -499,7 +499,16 @@ static void test_fixed_charge_ramp(void)
     cm.fixed_charge_current_ma = 100;
     cm.buck.vbus_adc_mv = 4200;
     qb_fixed_charge_control(&cm);
-    assert(cm.fixed_charge_current_ma == -100);
+    assert(cm.fixed_charge_current_ma == 0);
+    cm.fixed_charge_current_ma = -100;
+    cm.buck.vbus_adc_mv = 4500;
+    qb_fixed_charge_control(&cm);
+    assert(cm.fixed_charge_current_ma == 0);
+    cm.charge_current_ma = 0;
+    cm.fixed_charge_current_ma = 300;
+    cm.buck.vbus_adc_mv = 4801;
+    qb_fixed_charge_control(&cm);
+    assert(cm.fixed_charge_current_ma == 0);
 }
 
 static void test_charge_state_flags(void)

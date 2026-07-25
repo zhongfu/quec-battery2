@@ -77,12 +77,20 @@ void qb_fixed_charge_control(struct qb_manager *cm)
         qb_set_sgm41542_int(cm, "vbus_vindpm", 3900000);
     }
 
-    if (vbus < 4300)
-        cm->fixed_charge_current_ma -= 200;
-    else if (vbus >= 4801 && cm->fixed_charge_current_ma < cm->charge_current_ma)
+    if (vbus < 4300) {
+        if (cm->fixed_charge_current_ma > 200)
+            cm->fixed_charge_current_ma -= 200;
+        else
+            cm->fixed_charge_current_ma = 0;
+    } else if (vbus >= 4801 &&
+               cm->fixed_charge_current_ma < cm->charge_current_ma) {
         cm->fixed_charge_current_ma += 200;
+    }
+    if (cm->fixed_charge_current_ma < 0)
+        cm->fixed_charge_current_ma = 0;
     if (cm->fixed_charge_current_ma > cm->charge_current_ma)
-        cm->fixed_charge_current_ma = cm->charge_current_ma;
+        cm->fixed_charge_current_ma =
+            cm->charge_current_ma > 0 ? cm->charge_current_ma : 0;
     qb_set_sgm41542_int(cm, "ichrg_curr", cm->fixed_charge_current_ma * 1000);
 
     if (!cm->buck.ibat_adc_ma && cm->hiz_status == 2 &&
