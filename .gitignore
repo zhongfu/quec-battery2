@@ -1,0 +1,3 @@
+/quec_battery
+*.o
+/tests/behavior_test
