@@ -4,41 +4,89 @@
 #include <stdlib.h>
 #include <string.h>
 
-int qb_parse_pdo_line(char *line, struct qb_pdo *pdo, int index)
-{
-    char *token;
-    int min_v = 0, max_v = 0, current_a = 0;
-    if (sscanf(line, "Fixed :%dV, %dA", &min_v, &current_a) == 2) {
-        pdo->min_voltage_v = min_v;
-        pdo->max_voltage_v = min_v;
-        pdo->current_a = current_a;
-        pdo->number = index + 1;
-        pdo->selected = strstr(line, "<-") != NULL;
-        pdo->pps = false;
-        return 1;
-    }
+#define QB_PD_MAX_CAPABILITY_MV 50000
+#define QB_PD_MAX_CAPABILITY_MA 10000
 
-    if (strncmp(line, "Pps", 3) != 0) {
-        QBLOG(0x166, "%s", "Line does not start with Pps:\n");
+static bool qb_parse_scaled(double value, int maximum, int *result)
+{
+    double scaled = value * 1000.0;
+
+    if (!(value > 0.0) || scaled > maximum)
+        return false;
+    *result = (int)(scaled + 0.5);
+    return *result > 0;
+}
+
+static bool qb_parse_suffix(const char *suffix, bool *selected)
+{
+    while (*suffix == ' ' || *suffix == '\t')
+        suffix++;
+    if (*suffix == '\0') {
+        *selected = false;
+        return true;
+    }
+    if (!strcmp(suffix, "<-")) {
+        *selected = true;
+        return true;
+    }
+    return false;
+}
+
+int qb_parse_pdo_line(const char *line, struct qb_pdo *pdo, int index)
+{
+    const char *values;
+    double min_v;
+    double max_v;
+    double current_a;
+    int consumed = 0;
+    bool selected;
+    bool pps;
+
+    memset(pdo, 0, sizeof(*pdo));
+    if (!strncmp(line, "Fixed", 5)) {
+        values = line + 5;
+        pps = false;
+        while (*values == ' ' || *values == '\t')
+            values++;
+        if (*values == ':')
+            values++;
+        if (sscanf(values, " %lfV , %lfA %n",
+                   &min_v, &current_a, &consumed) != 2)
+            return 0;
+        max_v = min_v;
+    } else if (!strncmp(line, "Pps", 3)) {
+        values = line + 3;
+        pps = true;
+        while (*values == ' ' || *values == '\t')
+            values++;
+        if (*values == ':')
+            values++;
+        if (sscanf(values, " %lfV ~ %lfV , %lfA %n",
+                   &min_v, &max_v, &current_a, &consumed) != 3)
+            return 0;
+    } else {
+        QBLOG(0x166, "%s", "Unknown PDO line\n");
         return 0;
     }
-    token = strtok(line + 3, " :");
-    if (token)
-        min_v = atoi(token);
-    token = strtok(NULL, " V~");
-    if (token)
-        max_v = atoi(token);
-    token = strtok(NULL, " ,A");
-    if (token)
-        current_a = atoi(token);
 
-    pdo->min_voltage_v = min_v;
-    pdo->max_voltage_v = max_v;
-    pdo->current_a = current_a;
-    pdo->selected = false;
-    pdo->pps = true;
-    QBLOG(0x163, "Pps voltage_min: %d V, voltage_max :%d V, current: %d A\n",
-          pdo->min_voltage_v, pdo->max_voltage_v, pdo->current_a);
+    if (!qb_parse_suffix(values + consumed, &selected) ||
+        !qb_parse_scaled(min_v, QB_PD_MAX_CAPABILITY_MV,
+                         &pdo->min_voltage_mv) ||
+        !qb_parse_scaled(max_v, QB_PD_MAX_CAPABILITY_MV,
+                         &pdo->max_voltage_mv) ||
+        !qb_parse_scaled(current_a, QB_PD_MAX_CAPABILITY_MA,
+                         &pdo->current_ma) ||
+        pdo->min_voltage_mv > pdo->max_voltage_mv) {
+        memset(pdo, 0, sizeof(*pdo));
+        return 0;
+    }
+
+    pdo->number = index + 1;
+    pdo->selected = selected;
+    pdo->pps = pps;
+    QBLOG(0x163, "PDO voltage:%d~%d mV current:%d mA pps:%d\n",
+          pdo->min_voltage_mv, pdo->max_voltage_mv,
+          pdo->current_ma, pdo->pps);
     return 1;
 }
 
@@ -83,31 +131,31 @@ int qb_get_pdo_info(struct qb_pd_port *port)
         struct qb_pdo *p = &port->pdo[i];
         if (p->pps) {
             port->supports_pps = true;
-            port->pps_min_voltage_mv = p->min_voltage_v * 1000;
-            port->pps_max_voltage_mv = p->max_voltage_v * 1000;
-            port->pps_current_ma = p->current_a * 1000;
-            QBLOG(0x196, "Voltage = %d~%dV, Current = %dA\n",
-                  p->min_voltage_v, p->max_voltage_v, p->current_a);
+            port->pps_min_voltage_mv = p->min_voltage_mv;
+            port->pps_max_voltage_mv = p->max_voltage_mv;
+            port->pps_current_ma = p->current_ma;
+            QBLOG(0x196, "Voltage = %d~%d mV, Current = %d mA\n",
+                  p->min_voltage_mv, p->max_voltage_mv, p->current_ma);
             continue;
         }
-        switch (p->min_voltage_v) {
-        case 5:
+        switch (p->min_voltage_mv) {
+        case 5000:
             port->fixed_5v = true;
-            port->fixed_5v_current_ma = p->current_a * 1000;
+            port->fixed_5v_current_ma = p->current_ma;
             port->fixed_5v_number = p->number;
             if (port->max_voltage_mv < 5000)
                 port->max_voltage_mv = 5000;
             break;
-        case 9:
+        case 9000:
             port->fixed_9v = true;
-            port->fixed_9v_current_ma = p->current_a * 1000;
+            port->fixed_9v_current_ma = p->current_ma;
             port->fixed_9v_number = p->number;
             if (port->max_voltage_mv < 9000)
                 port->max_voltage_mv = 9000;
             break;
-        case 12:
+        case 12000:
             port->fixed_12v = true;
-            port->fixed_12v_current_ma = p->current_a * 1000;
+            port->fixed_12v_current_ma = p->current_ma;
             port->fixed_12v_number = p->number;
             if (port->max_voltage_mv < 12000)
                 port->max_voltage_mv = 12000;
@@ -157,8 +205,8 @@ void qb_request_pdo(struct qb_pd_port *port, int voltage_mv, int current_ma)
         struct qb_pdo *p = &port->pdo[i];
         int selected_current = current_ma;
 
-        if (p->current_a * 1000 < selected_current)
-            selected_current = p->current_a * 1000;
+        if (p->current_ma < selected_current)
+            selected_current = p->current_ma;
         if (p->pps) {
             int requested_voltage_mv = voltage_mv;
 
@@ -168,16 +216,16 @@ void qb_request_pdo(struct qb_pd_port *port, int voltage_mv, int current_ma)
                 if (requested_voltage_mv > port->manager->max_pd_vbus_mv)
                     requested_voltage_mv = port->manager->max_pd_vbus_mv;
             }
-            if (requested_voltage_mv < p->min_voltage_v * 1000 ||
-                requested_voltage_mv > p->max_voltage_v * 1000)
+            if (requested_voltage_mv < p->min_voltage_mv ||
+                requested_voltage_mv > p->max_voltage_mv)
                 continue;
             snprintf(request, sizeof(request), "%d  %d",
                      requested_voltage_mv, selected_current);
             p->requested_voltage_mv = requested_voltage_mv;
         } else {
-            if (voltage_mv != p->min_voltage_v * 1000)
+            if (voltage_mv != p->min_voltage_mv)
                 continue;
-            if (!p->current_a && port->manager) {
+            if (!p->current_ma && port->manager) {
                 port->manager->buck_charge_current_ua = 0;
                 qb_set_sgm41542_int(port->manager, "ichrg_curr",
                                     port->manager->buck_charge_current_ua);

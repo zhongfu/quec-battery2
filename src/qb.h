@@ -65,9 +65,9 @@ enum qb_temp_status {
 };
 
 struct qb_pdo {
-    int min_voltage_v;
-    int max_voltage_v;
-    int current_a;
+    int min_voltage_mv;
+    int max_voltage_mv;
+    int current_ma;
     int number;
     bool selected;
     bool pps;
@@ -224,7 +224,7 @@ bool qb_queue_enqueue(struct qb_manager *cm, const char *event);
 bool qb_queue_dequeue(struct qb_manager *cm, char out[QB_EVENT_SIZE]);
 int qb_interruptible_sleep(struct qb_manager *cm, unsigned seconds);
 
-int qb_parse_pdo_line(char *line, struct qb_pdo *pdo, int index);
+int qb_parse_pdo_line(const char *line, struct qb_pdo *pdo, int index);
 int qb_get_pdo_info(struct qb_pd_port *port);
 int qb_get_port_info(struct qb_pd_port *port, bool read_connection);
 void qb_request_pdo(struct qb_pd_port *port, int voltage_or_pdo, int current_ma);

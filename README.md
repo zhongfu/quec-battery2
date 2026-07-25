@@ -99,6 +99,16 @@ current and PPS voltage cannot exceed the stock maxima, shutdown cannot occur
 below the stock floor, and PPS cannot remain active above the stock full
 threshold.
 
+## Enhanced safety behavior
+
+### PD capability validation
+
+PD capability lines must contain positive voltage and current values, a
+non-reversed voltage range, recognized units, and no trailing data other than
+the controller's `<-` selection marker. Fractional volts and amps are preserved
+as millivolts and milliamps instead of being truncated. Invalid capabilities do
+not enter the port inventory and cannot mark a source as PPS-capable.
+
 ## Behavior reference
 
 See [`docs/original-daemon.md`](docs/original-daemon.md) before changing charging
@@ -113,6 +123,6 @@ or safety policy. It documents:
 - watchdog and battery-cycle persistence;
 - configuration values that the stock binary reads but does not actually use.
 
-The implementation deliberately retains confirmed stock quirks so that policy
-changes can be made from a faithful baseline rather than silently changing
-behavior during reconstruction.
+The original behavior remains the reference baseline. Intentional safety
+changes in this fork are documented above and covered by behavior regressions
+rather than being mixed into the reconstruction silently.

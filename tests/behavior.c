@@ -112,22 +112,30 @@ static void stock_pps_control(struct qb_manager *cm)
 static void test_pdo_parser(void)
 {
     struct qb_pdo pdo;
-    char fixed[] = "Fixed : 12V, 2A <-";
-    char pps[] = "Pps : 3.3V ~ 11V, 3A";
-    char malformed[] = "Pps";
-    char invalid[] = "Unknown : 5V, 3A";
+    const char *fixed = "Fixed : 12V, 2A <-";
+    const char *pps = "Pps : 3.3V ~ 11V, 3.25A";
+    const char *malformed = "Pps";
+    const char *zero_current = "Pps : 3.3V ~ 11V, 0A";
+    const char *reversed = "Pps : 11V ~ 3.3V, 3A";
+    const char *trailing = "Fixed : 5V, 3A garbage";
+    const char *invalid = "Unknown : 5V, 3A";
 
     assert(qb_parse_pdo_line(fixed, &pdo, 2) == 1);
-    assert(!pdo.pps && pdo.number == 3 && pdo.min_voltage_v == 12);
-    assert(pdo.max_voltage_v == 12 && pdo.current_a == 2 && pdo.selected);
-    memset(&pdo, 0, sizeof(pdo));
+    assert(!pdo.pps && pdo.number == 3 && pdo.min_voltage_mv == 12000);
+    assert(pdo.max_voltage_mv == 12000 && pdo.current_ma == 2000);
+    assert(pdo.selected);
+
     assert(qb_parse_pdo_line(pps, &pdo, 3) == 1);
-    assert(pdo.pps && pdo.min_voltage_v == 3 && pdo.max_voltage_v == 11);
-    assert(pdo.current_a == 3 && pdo.number == 0);
-    memset(&pdo, 0, sizeof(pdo));
-    assert(qb_parse_pdo_line(malformed, &pdo, 0) == 1);
-    assert(pdo.pps && pdo.min_voltage_v == 0 && pdo.max_voltage_v == 0);
-    assert(pdo.current_a == 0);
+    assert(pdo.pps && pdo.number == 4 && pdo.min_voltage_mv == 3300);
+    assert(pdo.max_voltage_mv == 11000 && pdo.current_ma == 3250);
+    assert(!pdo.selected);
+
+    assert(qb_parse_pdo_line(malformed, &pdo, 0) == 0);
+    assert(!pdo.pps && pdo.min_voltage_mv == 0 &&
+           pdo.max_voltage_mv == 0 && pdo.current_ma == 0);
+    assert(qb_parse_pdo_line(zero_current, &pdo, 0) == 0);
+    assert(qb_parse_pdo_line(reversed, &pdo, 0) == 0);
+    assert(qb_parse_pdo_line(trailing, &pdo, 0) == 0);
     assert(qb_parse_pdo_line(invalid, &pdo, 0) == 0);
 }
 
@@ -173,7 +181,7 @@ static void test_pd_inventory(void)
     assert(cm.pda.fixed_5v_current_ma == 3000);
     assert(cm.pda.fixed_9v_current_ma == 3000);
     assert(cm.pda.fixed_12v_current_ma == 2000);
-    assert(cm.pda.pps_min_voltage_mv == 3000);
+    assert(cm.pda.pps_min_voltage_mv == 3300);
     assert(cm.pda.pps_max_voltage_mv == 11000);
     assert(cm.pda.pps_current_ma == 3000 && cm.pda.max_voltage_mv == 12000);
     assert(cm.pda.attached && cm.pda.cc_pin == QB_CC1);
