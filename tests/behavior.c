@@ -203,6 +203,31 @@ static void test_pd_inventory(void)
     assert(rmdir(path) == 0);
 }
 
+static void test_pdo_request_safety(void)
+{
+    struct qb_manager cm;
+
+    memset(&cm, 0, sizeof(cm));
+    cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
+    cm.pda.name = "test-pd";
+    cm.pda.path = "/tmp/qb-pdo-request-missing/";
+    cm.pda.manager = &cm;
+    cm.pda.pdo_count = 1;
+    cm.pda.pdo[0].pps = true;
+    cm.pda.pdo[0].min_voltage_mv = 3300;
+    cm.pda.pdo[0].max_voltage_mv = 11000;
+    cm.pda.pdo[0].current_ma = 3000;
+
+    assert(!qb_request_pdo(&cm.pda, 9000, 0));
+    assert(!qb_request_pdo(&cm.pda, 12000, 2000));
+    assert(!qb_request_pdo(&cm.pda, 9000, 2000));
+    assert(qb_pps_voltage_matches(9000, 8300));
+    assert(qb_pps_voltage_matches(9000, 9700));
+    assert(!qb_pps_voltage_matches(9000, 8299));
+    assert(!qb_pps_voltage_matches(9000, 9701));
+    assert(!qb_pps_voltage_matches(0, 0));
+}
+
 static void test_event_queue(void)
 {
     struct qb_manager cm;
@@ -499,6 +524,7 @@ int main(void)
 {
     test_pdo_parser();
     test_pd_inventory();
+    test_pdo_request_safety();
     test_event_queue();
     test_config_loader();
     test_config_bounds_and_helpers();

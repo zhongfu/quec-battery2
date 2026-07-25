@@ -18,22 +18,43 @@ static bool qb_pump_running_for(struct qb_manager *cm, struct qb_pd_port *port)
            cm->battery.present == 1 && port->power_role == QB_ROLE_SINK;
 }
 
+static void qb_pump_fallback_to_buck(struct qb_manager *cm,
+                                     struct qb_pd_port *port, int index)
+{
+    qb_ovp_off(cm, index);
+    qb_disable_pump(cm);
+    qb_disable_pump_cfg(cm, port);
+    (void)qb_request_pdo(port, 5000, port->fixed_5v_current_ma);
+    qb_enable_buck_cfg(cm, port);
+}
+
 static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int index)
 {
     int initial_current;
+    int measured_vbus_mv;
 
     cm->pps_voltage_mv = qb_limit_pps_voltage(
         cm, cm->pump.vbat_adc_mv * 220 / 100);
     initial_current = (cm->charge_current_ma / 200) * 100;
-    qb_request_pdo(port, cm->pps_voltage_mv, initial_current);
+    if (!qb_request_pdo(port, cm->pps_voltage_mv, initial_current)) {
+        qb_pump_fallback_to_buck(cm, port, index);
+        return;
+    }
+
     qb_ovp_off(cm, index ^ 1);
     qb_ovp_on(cm, index);
     sleep(1);
-    qb_set_sgm41600(cm, "charge_en", "2");
+    if (port->power_role != QB_ROLE_SINK || !port->supports_pps ||
+        qb_read_int(QB_SGM41600_PATH, "vbus_adc", &measured_vbus_mv) < 0 ||
+        !qb_pps_voltage_matches(cm->pps_voltage_mv, measured_vbus_mv) ||
+        qb_set_sgm41600(cm, "charge_en", "2") < 0) {
+        qb_pump_fallback_to_buck(cm, port, index);
+        return;
+    }
 
     if (!qb_pump_running_for(cm, port)) {
-        qb_ovp_off(cm, index);
-        qb_disable_pump(cm);
+        qb_pump_fallback_to_buck(cm, port, index);
+        return;
     }
 
     while (qb_pump_running_for(cm, port)) {
@@ -44,23 +65,20 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
         qb_get_sgm41600_info(cm);
         qb_pump_pps_control(cm);
 
-        if ((cm->pump.vbat_adc_mv >= cm->pd_full_mv && cm->pump.ibat_adc_ma <= 2000) ||
-            cm->pump_error || cm->pump.vbat_adc_mv < 3401 || !port->supports_pps ||
-            cm->temp_status < QB_TEMP_NORMAL || cm->temp_status > QB_TEMP_WARM) {
-            qb_disable_pump(cm);
-            if (port == &cm->pda) {
-                qb_request_pdo(port, 5000, port->fixed_5v_current_ma);
-                qb_disable_pump_cfg(cm, port);
-                qb_enable_buck_cfg(cm, port);
-            } else {
-                qb_disable_pump_cfg(cm, port);
-                qb_enable_buck_cfg(cm, port);
-                qb_request_pdo(port, 5000, port->fixed_5v_current_ma);
-            }
+        if ((cm->pump.vbat_adc_mv >= cm->pd_full_mv &&
+             cm->pump.ibat_adc_ma <= 2000) ||
+            cm->pump_error || cm->pump.vbat_adc_mv < 3401 ||
+            !port->supports_pps ||
+            cm->temp_status < QB_TEMP_NORMAL ||
+            cm->temp_status > QB_TEMP_WARM) {
+            qb_pump_fallback_to_buck(cm, port, index);
             return;
         }
-        qb_request_pdo(port, cm->pps_voltage_mv,
-                       qb_limit_charge_current(cm, 2650));
+        if (!qb_request_pdo(port, cm->pps_voltage_mv,
+                            qb_limit_charge_current(cm, 2650))) {
+            qb_pump_fallback_to_buck(cm, port, index);
+            return;
+        }
     }
 
     qb_disable_pump(cm);

@@ -109,6 +109,15 @@ the controller's `<-` selection marker. Fractional volts and amps are preserved
 as millivolts and milliamps instead of being truncated. Invalid capabilities do
 not enter the port inventory and cannot mark a source as PPS-capable.
 
+### PPS contract gating
+
+PDO requests now report matching, write, and refresh failures. The SGM41600
+remains disabled until the requested PPS voltage is observed on its VBUS ADC
+within 700 mV and the Type-C controller still reports a PPS-capable sink.
+Failure at initial negotiation or during a later voltage adjustment disables
+the pump and falls back to the port's 5 V buck path. This uses the one-second
+settling delay already present in the stock sequence; it adds no new delay.
+
 ## Behavior reference
 
 See [`docs/original-daemon.md`](docs/original-daemon.md) before changing charging

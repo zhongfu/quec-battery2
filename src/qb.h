@@ -227,7 +227,9 @@ int qb_interruptible_sleep(struct qb_manager *cm, unsigned seconds);
 int qb_parse_pdo_line(const char *line, struct qb_pdo *pdo, int index);
 int qb_get_pdo_info(struct qb_pd_port *port);
 int qb_get_port_info(struct qb_pd_port *port, bool read_connection);
-void qb_request_pdo(struct qb_pd_port *port, int voltage_or_pdo, int current_ma);
+bool qb_request_pdo(struct qb_pd_port *port, int voltage_or_pdo,
+                    int current_ma);
+bool qb_pps_voltage_matches(int requested_mv, int measured_mv);
 
 int qb_get_sgm41542_info(struct qb_manager *cm);
 int qb_get_sgm41600_info(struct qb_manager *cm);

@@ -175,7 +175,7 @@ int qb_get_port_info(struct qb_pd_port *port, bool read_connection)
 {
     char buf[32] = {0};
 
-    qb_get_pdo_info(port);
+    int status = qb_get_pdo_info(port);
     if (read_connection) {
         qb_read_str(port->path, "cc_pin", buf, sizeof(buf));
         if (!strcmp(buf, "CC1"))
@@ -194,22 +194,24 @@ int qb_get_port_info(struct qb_pd_port *port, bool read_connection)
 
     qb_read_str(port->path, "pwr_role", buf, sizeof(buf));
     port->power_role = !strcmp(buf, "Source") ? QB_ROLE_SOURCE : QB_ROLE_SINK;
-    return 0;
+    return status == 0 ? 0 : -1;
 }
 
-void qb_request_pdo(struct qb_pd_port *port, int voltage_mv, int current_ma)
+bool qb_request_pdo(struct qb_pd_port *port, int voltage_mv, int current_ma)
 {
     char request[32];
+
+    if (current_ma <= 0)
+        return false;
 
     for (int i = 0; i < port->pdo_count; i++) {
         struct qb_pdo *p = &port->pdo[i];
         int selected_current = current_ma;
+        int requested_voltage_mv = voltage_mv;
 
         if (p->current_ma < selected_current)
             selected_current = p->current_ma;
         if (p->pps) {
-            int requested_voltage_mv = voltage_mv;
-
             if (port->manager) {
                 if (!qb_pps_enabled(port->manager))
                     continue;
@@ -222,31 +224,32 @@ void qb_request_pdo(struct qb_pd_port *port, int voltage_mv, int current_ma)
             snprintf(request, sizeof(request), "%d  %d",
                      requested_voltage_mv, selected_current);
             p->requested_voltage_mv = requested_voltage_mv;
-        } else {
-            if (voltage_mv != p->min_voltage_mv)
-                continue;
-            if (!p->current_ma && port->manager) {
-                port->manager->buck_charge_current_ua = 0;
-                qb_set_sgm41542_int(port->manager, "ichrg_curr",
-                                    port->manager->buck_charge_current_ua);
-                qb_disable_buck_cfg(port->manager, port);
-            }
-            snprintf(request, sizeof(request), "%d  %d", i + 1, selected_current);
-        }
-        if (p->pps)
             p->requested_current_ma = selected_current;
-        qb_write_str(port->path, "pdo_set", request);
-        if (p->pps) {
-            QBLOG(0x3bd, "Voltage = %d mV, Current = %d mA\n",
-                  p->requested_voltage_mv, p->requested_current_ma);
         } else {
-            QBLOG(0x3bd, "Voltage = %d mV, Current = %d mA\n",
-                  voltage_mv, selected_current);
+            if (requested_voltage_mv != p->min_voltage_mv)
+                continue;
+            snprintf(request, sizeof(request), "%d  %d", i + 1,
+                     selected_current);
         }
-        qb_get_port_info(port, false);
-        return;
+
+        if (qb_write_str(port->path, "pdo_set", request) < 0) {
+            QBLOG(0x3bd, "%s request write failed\n", port->name);
+            return false;
+        }
+        QBLOG(0x3bd, "Voltage = %d mV, Current = %d mA\n",
+              requested_voltage_mv, selected_current);
+        return qb_get_port_info(port, false) == 0;
     }
 
-    /* The original refreshes capability/contract state even if no PDO matched. */
-    qb_get_port_info(port, false);
+    QBLOG(0x3bd, "%s has no compatible PDO\n", port->name);
+    return false;
+}
+
+bool qb_pps_voltage_matches(int requested_mv, int measured_mv)
+{
+    const int tolerance_mv = 700;
+
+    return requested_mv > 0 &&
+           measured_mv >= requested_mv - tolerance_mv &&
+           measured_mv <= requested_mv + tolerance_mv;
 }
