@@ -134,6 +134,16 @@ monitors require fresh valid charger, battery, and port telemetry and leave the
 active charging path on a failed refresh. Consecutive-failure counters reset
 only after a complete sample succeeds.
 
+### Watchdog reconnection
+
+The watchdog configuration is checked before opening a socket. Each connection
+attempt creates a new close-on-exec socket and completes nonblocking
+`EINPROGRESS` with `poll()` and `SO_ERROR`. A lost heartbeat connection is
+closed and re-established without reusing the descriptor; ten failed connection
+attempts, a charger watchdog fault, or ten consecutive feed/read failures
+request a reboot. Signal ownership remains in `main` instead of being replaced
+by the worker thread.
+
 ## Behavior reference
 
 See [`docs/original-daemon.md`](docs/original-daemon.md) before changing charging

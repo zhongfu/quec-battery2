@@ -275,6 +275,7 @@ void qb_reset_charge_state(struct qb_manager *cm);
 void *qb_pump_monitor(void *arg);
 void *qb_buck_monitor(void *arg);
 void *qb_event_monitor(void *arg);
+int qb_connect_unix_socket(const char *path, int timeout_ms);
 void *qb_watchdog_monitor(void *arg);
 void *qb_gauge_monitor(void *arg);
 void *qb_thermal_monitor(void *arg);

@@ -1,15 +1,18 @@
 #include "qb.h"
 
 #include <errno.h>
-#include <fcntl.h>
+#include <poll.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
+#define QB_WATCHDOG_CONNECT_ATTEMPTS 10
+#define QB_WATCHDOG_CONNECT_TIMEOUT_MS 5000
+#define QB_WATCHDOG_FAILURE_LIMIT 10
 
 static int qb_watchdog_enabled(void)
 {
@@ -34,44 +37,74 @@ static int qb_watchdog_enabled(void)
     return enabled;
 }
 
-static int qb_watchdog_fd = -1;
-
-static void qb_watchdog_signal_handler(int signo)
-{
-    (void)signo;
-    if (qb_watchdog_fd > 0)
-        close(qb_watchdog_fd);
-    exit(EXIT_SUCCESS);
-}
-
-static int qb_open_watchdog_socket(void)
-{
-    int flags;
-
-    qb_watchdog_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (qb_watchdog_fd < 0)
-        return -1;
-    flags = fcntl(qb_watchdog_fd, F_GETFL, 0);
-    if (flags < 0 || fcntl(qb_watchdog_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        close(qb_watchdog_fd);
-        return -1;
-    }
-    return qb_watchdog_fd;
-}
-
-static bool qb_connect_watchdog(int fd)
+int qb_connect_unix_socket(const char *path, int timeout_ms)
 {
     struct sockaddr_un address;
+    struct pollfd poll_fd;
+    socklen_t address_length;
+    socklen_t error_length;
+    int socket_error = 0;
+    int fd;
+
+    if (!path || timeout_ms < 0 || strlen(path) >= sizeof(address.sun_path))
+        return -1;
+
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+        return -1;
 
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
-    strncpy(address.sun_path, QB_WDT_SOCKET, sizeof(address.sun_path) - 1);
-    for (int tries = 0; tries < 10; tries++) {
-        if (connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0)
-            return true;
-        sleep(5);
+    strcpy(address.sun_path, path);
+    address_length = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
+                                 strlen(address.sun_path) + 1);
+    if (connect(fd, (struct sockaddr *)&address, address_length) == 0)
+        return fd;
+    if (errno != EINPROGRESS)
+        goto failure;
+
+    poll_fd.fd = fd;
+    poll_fd.events = POLLOUT;
+    poll_fd.revents = 0;
+    if (poll(&poll_fd, 1, timeout_ms) <= 0 ||
+        !(poll_fd.revents & POLLOUT))
+        goto failure;
+
+    error_length = sizeof(socket_error);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR,
+                   &socket_error, &error_length) < 0 || socket_error != 0)
+        goto failure;
+    return fd;
+
+failure:
+    close(fd);
+    return -1;
+}
+
+static bool qb_watchdog_sleep(struct qb_manager *cm, unsigned seconds)
+{
+    for (unsigned elapsed = 0; elapsed < seconds * 10; elapsed++) {
+        if (!cm->running)
+            return false;
+        usleep(100000);
     }
-    return false;
+    return cm->running;
+}
+
+static int qb_connect_watchdog(struct qb_manager *cm)
+{
+    for (int attempt = 0;
+         attempt < QB_WATCHDOG_CONNECT_ATTEMPTS && cm->running;
+         attempt++) {
+        int fd = qb_connect_unix_socket(QB_WDT_SOCKET,
+                                        QB_WATCHDOG_CONNECT_TIMEOUT_MS);
+        if (fd >= 0)
+            return fd;
+        if (attempt + 1 < QB_WATCHDOG_CONNECT_ATTEMPTS &&
+            !qb_watchdog_sleep(cm, 5))
+            break;
+    }
+    return -1;
 }
 
 static void qb_run_system(const char *command)
@@ -84,22 +117,15 @@ static void qb_reboot_now(void)
 {
     qb_run_system("echo 0 > /sys/devices/platform/hypervisor/"
                   "hypervisor:qcom,gh-watchdog/user_pet_enabled");
-    if (system("reboot") < 0)
+    if (system("reboot") != 0)
         QBLOG(0xacb, "%s", "reboot command failed\n");
 }
 
 void *qb_watchdog_monitor(void *arg)
 {
     struct qb_manager *cm = arg;
-    int failures;
-    int fd;
 
     pthread_detach(pthread_self());
-    signal(SIGINT, qb_watchdog_signal_handler);
-    fd = qb_open_watchdog_socket();
-    if (fd < 0)
-        exit(EXIT_FAILURE);
-
     if (!qb_watchdog_enabled()) {
         qb_run_system("/etc/init.d/ql_wdt_service.init stop");
         qb_write_str(QB_SGM41542_PATH, "watchdog", "999");
@@ -109,38 +135,57 @@ void *qb_watchdog_monitor(void *arg)
         return NULL;
     }
 
-    for (;;) {
+    while (cm->running) {
+        int feed_failures = 0;
+        int read_failures = 0;
+        int fd;
+
         qb_write_str(QB_SGM41542_PATH, "watchdog", "998");
         qb_write_str(QB_SGM41600_PATH, "watchdog", "1");
-        if (!qb_connect_watchdog(fd))
-            qb_run_system("reboot");
-        failures = 0;
+        fd = qb_connect_watchdog(cm);
+        if (fd < 0) {
+            if (cm->running)
+                qb_reboot_now();
+            return NULL;
+        }
 
         while (cm->running) {
             int buck_fault;
             int pump_fault;
-            ssize_t sent = send(fd, "HEARTBEAT", 9, 0);
+            ssize_t sent = send(fd, "HEARTBEAT", 9, MSG_NOSIGNAL);
 
-            if (sent < 0 && errno != EAGAIN) {
-                qb_reboot_now();
+            if (sent != 9)
                 break;
-            }
-            if (qb_read_int(QB_SGM41542_PATH, "watchdog", &buck_fault) < 0 ||
-                qb_read_int(QB_SGM41600_PATH, "watchdog", &pump_fault) < 0)
-                exit(EXIT_SUCCESS);
 
-            if (buck_fault == 0x50 || pump_fault == 0x20)
-                qb_reboot_now();
+            if (qb_read_int(QB_SGM41542_PATH, "watchdog", &buck_fault) < 0 ||
+                qb_read_int(QB_SGM41600_PATH, "watchdog", &pump_fault) < 0) {
+                if (++read_failures >= QB_WATCHDOG_FAILURE_LIMIT) {
+                    close(fd);
+                    qb_reboot_now();
+                    return NULL;
+                }
+            } else {
+                read_failures = 0;
+                if (buck_fault == 0x50 || pump_fault == 0x20) {
+                    close(fd);
+                    qb_reboot_now();
+                    return NULL;
+                }
+            }
 
             if (qb_write_str(QB_SGM41542_PATH, "watchdog", "1") < 0) {
-                failures++;
-                if (failures >= 10)
+                if (++feed_failures >= QB_WATCHDOG_FAILURE_LIMIT) {
+                    close(fd);
                     qb_reboot_now();
+                    return NULL;
+                }
             } else {
-                failures = 0;
+                feed_failures = 0;
             }
-            sleep(5);
+            if (!qb_watchdog_sleep(cm, 5))
+                break;
         }
         close(fd);
     }
+    return NULL;
 }

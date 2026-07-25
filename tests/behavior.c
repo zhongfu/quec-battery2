@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 static int stock_cycle_voltage_limit(int cycle)
@@ -264,6 +266,37 @@ static void test_sysfs_integer_validation(void)
     assert(unlink(path) == 0);
     snprintf(path, sizeof(path), "%.*s", (int)strlen(directory) - 1, directory);
     assert(rmdir(path) == 0);
+}
+
+static void test_watchdog_socket_connect(void)
+{
+    struct sockaddr_un address;
+    char path[sizeof(address.sun_path)];
+    int listener;
+    int client;
+    int server;
+
+    snprintf(path, sizeof(path), "/tmp/qb-wdt-test-%ld.sock", (long)getpid());
+    unlink(path);
+    listener = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    assert(listener >= 0);
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    strcpy(address.sun_path, path);
+    assert(bind(listener, (struct sockaddr *)&address, sizeof(address)) == 0);
+    assert(listen(listener, 1) == 0);
+
+    client = qb_connect_unix_socket(path, 1000);
+    assert(client >= 0);
+    server = accept(listener, NULL, NULL);
+    assert(server >= 0);
+    assert(send(client, "HEARTBEAT", 9, 0) == 9);
+
+    close(server);
+    close(client);
+    close(listener);
+    assert(unlink(path) == 0);
+    assert(qb_connect_unix_socket(path, 10) == -1);
 }
 
 static void test_event_queue(void)
@@ -576,6 +609,7 @@ int main(void)
     test_config_loader();
     test_config_bounds_and_helpers();
     test_sysfs_integer_validation();
+    test_watchdog_socket_connect();
     test_initial_temperature_policy();
     test_temperature_policy_matrix();
     test_pps_policy_matrix();
