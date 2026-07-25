@@ -36,6 +36,10 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
 {
     int initial_current;
     int measured_vbus_mv;
+    if (qb_program_pump_voltage_limit(cm) < 0) {
+        qb_pump_fallback_to_buck(cm, port, index);
+        return;
+    }
 
     cm->pps_voltage_mv = qb_limit_pps_voltage(
         cm, cm->pump.vbat_adc_mv * 220 / 100);
@@ -70,9 +74,14 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
             qb_pump_fallback_to_buck(cm, port, index);
             return;
         }
+        if (qb_program_pump_voltage_limit(cm) < 0) {
+            qb_pump_fallback_to_buck(cm, port, index);
+            return;
+        }
         qb_pump_pps_control(cm);
 
-        if ((cm->pump.vbat_adc_mv >= cm->pd_full_mv &&
+        if ((!cm->charge_limit_mv &&
+             cm->pump.vbat_adc_mv >= cm->pd_full_mv &&
              cm->pump.ibat_adc_ma <= 2000) ||
             cm->pump_error || cm->pump.vbat_adc_mv < 3401 ||
             !port->supports_pps ||
@@ -139,8 +148,10 @@ static bool qb_buck_running_for(struct qb_manager *cm, struct qb_pd_port *port)
 
 static void qb_buck_run_port(struct qb_manager *cm, struct qb_pd_port *port, int index)
 {
-    int previous_temp_status = -1;
-
+    if (qb_program_buck_voltage_limit(cm) < 0) {
+        qb_disable_buck(cm);
+        return;
+    }
     qb_enable_buck(cm, port);
     if (!qb_buck_running_for(cm, port)) {
         qb_ovp_off(cm, index);
@@ -170,7 +181,7 @@ static void qb_buck_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
         }
 
         if (cm->buck.vbat_adc_mv > 3400 &&
-            cm->buck.vbat_adc_mv < cm->pd_full_mv - 100 &&
+            cm->buck.vbat_adc_mv < qb_pump_target_mv(cm) - 100 &&
             port->supports_pps &&
             cm->temp_status >= QB_TEMP_NORMAL && cm->temp_status <= QB_TEMP_WARM &&
             !cm->pump_error) {
@@ -188,9 +199,9 @@ static void qb_buck_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
         }
 
         qb_fixed_charge_control(cm);
-        if (previous_temp_status != (int)cm->temp_status) {
-            qb_set_sgm41542_int(cm, "vreg", cm->full_voltage_mv * 1000);
-            previous_temp_status = cm->temp_status;
+        if (qb_program_buck_voltage_limit(cm) < 0) {
+            qb_disable_buck(cm);
+            return;
         }
     }
     qb_set_sgm41542_int(cm, "vbus_vindpm", 3900000);

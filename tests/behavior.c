@@ -335,6 +335,7 @@ static void test_config_loader(void)
     cm.min_shutdown_mv = 3400;
     cm.max_pd_vbus_mv = 9800;
     cm.pd_full_mv = QB_STOCK_PD_FULL_MV;
+    cm.full_voltage_mv = 4400;
     snprintf(path, sizeof(path), "/tmp/qb-config-test-%ld", (long)getpid());
     fp = fopen(path, "w");
     assert(fp != NULL);
@@ -344,7 +345,8 @@ static void test_config_loader(void)
           "\toption max_current_ma '5100'\n"
           "\toption min_shutdown_mv \"3350\"\n"
           "\toption max_pd_vbus_mv '9600'\n"
-          "\toption pd_full_mv '4025'\n", fp);
+          "\toption pd_full_mv '4025'\n"
+          "\toption charge_limit_mv '4050'\n", fp);
     fclose(fp);
     assert(qb_load_config_file(&cm, path) == 0);
     unlink(path);
@@ -352,6 +354,8 @@ static void test_config_loader(void)
     assert(cm.min_shutdown_mv == QB_STOCK_MIN_SHUTDOWN_MV);
     assert(cm.max_pd_vbus_mv == 9600);
     assert(cm.pd_full_mv == 4025);
+    assert(cm.charge_limit_mv == 4050);
+    assert(cm.full_voltage_mv == 4050);
 }
 
 static void test_config_bounds_and_helpers(void)
@@ -365,6 +369,7 @@ static void test_config_bounds_and_helpers(void)
     cm.min_shutdown_mv = QB_STOCK_MIN_SHUTDOWN_MV;
     cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
     cm.pd_full_mv = QB_STOCK_PD_FULL_MV;
+    cm.full_voltage_mv = 4400;
     snprintf(path, sizeof(path), "/tmp/qb-config-bounds-%ld", (long)getpid());
     fp = fopen(path, "w");
     assert(fp != NULL);
@@ -372,25 +377,31 @@ static void test_config_bounds_and_helpers(void)
           "\toption max_current_ma '6000'\n"
           "\toption min_shutdown_mv '5000'\n"
           "\toption max_pd_vbus_mv '12000'\n"
-          "\toption pd_full_mv '1000'\n", fp);
+          "\toption pd_full_mv '1000'\n"
+          "\toption charge_limit_mv '5000'\n", fp);
     fclose(fp);
     assert(qb_load_config_file(&cm, path) == 0);
     assert(cm.max_current_ma == QB_STOCK_MAX_CURRENT_MA);
     assert(cm.min_shutdown_mv == QB_SAFE_MAX_SHUTDOWN_MV);
     assert(cm.max_pd_vbus_mv == QB_STOCK_MAX_PPS_VOLTAGE_MV);
     assert(cm.pd_full_mv == QB_MIN_PD_FULL_MV);
+    assert(cm.charge_limit_mv == QB_MAX_CHARGE_LIMIT_MV);
+    assert(cm.full_voltage_mv == QB_MAX_CHARGE_LIMIT_MV);
 
     cm.max_current_ma = QB_STOCK_MAX_CURRENT_MA;
     cm.min_shutdown_mv = QB_STOCK_MIN_SHUTDOWN_MV;
     cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
     cm.pd_full_mv = QB_STOCK_PD_FULL_MV;
+    cm.charge_limit_mv = 0;
+    cm.full_voltage_mv = 4400;
     fp = fopen(path, "w");
     assert(fp != NULL);
     fputs("config battery 'settings'\n"
           "\toption max_current_ma '0'\n"
           "\toption min_shutdown_mv 'invalid'\n"
           "\toption max_pd_vbus_mv '5000'\n"
-          "\toption pd_full_mv '4050'\n", fp);
+          "\toption pd_full_mv '4050'\n"
+          "\toption charge_limit_mv '-1'\n", fp);
     fclose(fp);
     assert(qb_load_config_file(&cm, path) == 0);
     unlink(path);
@@ -398,6 +409,8 @@ static void test_config_bounds_and_helpers(void)
     assert(cm.min_shutdown_mv == QB_STOCK_MIN_SHUTDOWN_MV);
     assert(cm.max_pd_vbus_mv == 5000);
     assert(cm.pd_full_mv == 4050);
+    assert(cm.charge_limit_mv == 0);
+    assert(cm.full_voltage_mv == 4400);
     assert(qb_limit_charge_current(&cm, 5300) == 0);
     assert(!qb_pps_enabled(&cm));
     assert(qb_limit_pps_voltage(&cm, 8000) == 0);
@@ -437,6 +450,65 @@ static void test_config_bounds_and_helpers(void)
     policy.pps_voltage_mv = 9000;
     qb_pump_pps_control(&policy);
     assert(policy.pps_voltage_mv == 9000);
+}
+
+static void test_charge_voltage_limit(void)
+{
+    struct qb_manager cm;
+    unsigned bat_ovp;
+    unsigned regulation;
+    char directory[96];
+    char path[128];
+    char value[64];
+    FILE *fp;
+
+    memset(&cm, 0, sizeof(cm));
+    assert(qb_charge_voltage_limit(&cm, 4400) == 4400);
+    cm.charge_limit_mv = 4000;
+    assert(qb_charge_voltage_limit(&cm, 4400) == 4000);
+    assert(qb_charge_voltage_limit(&cm, 3900) == 3900);
+
+    assert(qb_sgm41600_voltage_registers(3800, &bat_ovp,
+                                         &regulation) == 3800);
+    assert(bat_ovp == 0x80 && regulation == 0x47);
+    assert(qb_sgm41600_voltage_registers(4000, &bat_ovp,
+                                         &regulation) == 4000);
+    assert(bat_ovp == 0x88 && regulation == 0x47);
+    assert(qb_sgm41600_voltage_registers(4180, &bat_ovp,
+                                         &regulation) == 4175);
+    assert(bat_ovp == 0x8f && regulation == 0x47);
+    assert(qb_sgm41600_voltage_registers(4200, &bat_ovp,
+                                         &regulation) == 4200);
+    assert(bat_ovp == 0x90 && regulation == 0x47);
+    assert(qb_sgm41600_voltage_registers(3799, &bat_ovp,
+                                         &regulation) == -1);
+
+    cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
+    cm.full_voltage_mv = 4000;
+    cm.charge_current_ma = QB_STOCK_MAX_CURRENT_MA;
+    cm.pps_voltage_mv = 9000;
+    cm.pump.vbat_adc_mv = 4000;
+    cm.pump.ibat_adc_ma = 1000;
+    cm.pump.ibus_adc_ma = 1;
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 8900);
+    cm.pump.vbat_adc_mv = 3950;
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 9000);
+
+    snprintf(directory, sizeof(directory), "/tmp/qb-register-test-%ld/",
+             (long)getpid());
+    assert(mkdir(directory, 0700) == 0);
+    snprintf(path, sizeof(path), "%sregisters", directory);
+    fp = fopen(path, "w");
+    assert(fp != NULL);
+    fputs("Reg[04] = 0x88\nReg[05] = 0xaf\n", fp);
+    fclose(fp);
+    assert(qb_update_register(directory, 0x05, 0x80, 0) == 0);
+    assert(qb_read_str(directory, "registers", value, sizeof(value)) > 0);
+    assert(strcmp(value, "0x05 0x2f") == 0);
+    assert(unlink(path) == 0);
+    assert(rmdir(directory) == 0);
 }
 
 static void test_initial_temperature_policy(void)
@@ -641,6 +713,7 @@ int main(void)
     test_sysfs_integer_validation();
     test_watchdog_socket_connect();
     test_battery_presence_policy();
+    test_charge_voltage_limit();
     test_initial_temperature_policy();
     test_temperature_policy_matrix();
     test_pps_policy_matrix();

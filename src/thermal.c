@@ -181,7 +181,7 @@ static void qb_apply_thermal_limits(struct qb_manager *cm, int full_mv,
     int cycle_limit;
 
     if (qb_power_limit_state == 1) {
-        cm->full_voltage_mv = 4180;
+        cm->full_voltage_mv = qb_charge_voltage_limit(cm, 4180);
         cm->charge_current_ma = qb_limit_charge_current(
             cm, cm->buck.vbat_adc_mv > 3000 ? 1060 : 275);
         cm->temp_status = QB_TEMP_HOT;
@@ -196,7 +196,8 @@ static void qb_apply_thermal_limits(struct qb_manager *cm, int full_mv,
         return;
 
     cycle_limit = qb_cycle_voltage_limit(cm->battery.cycle_count);
-    cm->full_voltage_mv = full_mv < cycle_limit ? full_mv : cycle_limit;
+    cm->full_voltage_mv = qb_charge_voltage_limit(
+        cm, full_mv < cycle_limit ? full_mv : cycle_limit);
     cm->temp_status = status;
     cm->charge_current_ma = qb_limit_charge_current(
         cm, cm->buck.vbat_adc_mv < 3001 ? 275 : current_ma);

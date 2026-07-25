@@ -17,6 +17,8 @@
 #define QB_STOCK_MAX_PPS_VOLTAGE_MV 9800
 #define QB_MIN_PD_FULL_MV 3401
 #define QB_STOCK_PD_FULL_MV 4200
+#define QB_MIN_CHARGE_LIMIT_MV 3800
+#define QB_MAX_CHARGE_LIMIT_MV 4200
 
 #define QB_LOG_FLAG "/tmp/quec_battery_log"
 #define QB_UCI_CONFIG "/etc/config/qlbattery"
@@ -173,6 +175,7 @@ struct qb_manager {
     int min_shutdown_mv;
     int max_pd_vbus_mv;
 
+    int charge_limit_mv;
     struct qb_pd_port pda;
     struct qb_pd_port pdb;
     struct qb_sgm41542 buck;
@@ -210,6 +213,8 @@ struct qb_manager {
     bool pump_error;
     int v42_capacity;
     int buck_error_count;
+    int programmed_buck_voltage_mv;
+    int programmed_pump_voltage_mv;
 
     pthread_mutex_t reset_mutex;
     struct qb_event_queue events;
@@ -255,6 +260,8 @@ bool qb_battery_absent(const struct qb_manager *cm);
 int qb_set_sgm41542(struct qb_manager *cm, const char *attr, const char *value);
 int qb_set_sgm41542_int(struct qb_manager *cm, const char *attr, int value);
 int qb_set_sgm41600(struct qb_manager *cm, const char *attr, const char *value);
+int qb_program_buck_voltage_limit(struct qb_manager *cm);
+int qb_program_pump_voltage_limit(struct qb_manager *cm);
 void qb_ovp_on(struct qb_manager *cm, int port);
 void qb_ovp_off(struct qb_manager *cm, int port);
 void qb_mos_on(struct qb_manager *cm, int port);
@@ -271,6 +278,7 @@ void qb_set_pwm(bool enabled);
 void qb_no_charge(struct qb_manager *cm);
 void qb_pump_pps_control(struct qb_manager *cm);
 void qb_fixed_charge_control(struct qb_manager *cm);
+int qb_pump_target_mv(const struct qb_manager *cm);
 int qb_select_qc_max_voltage(struct qb_manager *cm);
 void qb_mode1_charge(struct qb_manager *cm);
 void qb_mode2_charge(struct qb_manager *cm);
@@ -298,6 +306,11 @@ bool qb_pps_enabled(const struct qb_manager *cm);
 int qb_limit_pps_voltage(const struct qb_manager *cm, int requested_mv);
 bool qb_low_voltage_danger(const struct qb_manager *cm, bool adapter_online,
                            int battery_mv);
+int qb_charge_voltage_limit(const struct qb_manager *cm, int policy_mv);
+int qb_sgm41600_voltage_registers(int target_mv, unsigned *bat_ovp,
+                                  unsigned *regulation);
+int qb_update_register(const char *dir, unsigned reg, unsigned mask,
+                       unsigned value);
 void qb_update_charge_limits(struct qb_manager *cm);
 void qb_init_temp_status(struct qb_manager *cm);
 int qb_set_battery_cycle(struct qb_manager *cm);

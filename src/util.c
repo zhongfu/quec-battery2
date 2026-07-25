@@ -99,3 +99,34 @@ int qb_write_int(const char *dir, const char *attr, int value)
     snprintf(buf, sizeof(buf), "%d", value);
     return qb_write_str(dir, attr, buf);
 }
+
+int qb_update_register(const char *dir, unsigned reg, unsigned mask,
+                       unsigned value)
+{
+    char dump[1024];
+    char request[32];
+    char *line;
+    char *saveptr = NULL;
+    unsigned found_reg;
+    unsigned old_value;
+    unsigned new_value;
+
+    if (reg > 0xff || mask > 0xff || value > 0xff ||
+        qb_read_str(dir, "registers", dump, sizeof(dump)) < 0)
+        return -1;
+
+    for (line = strtok_r(dump, "\n", &saveptr); line;
+         line = strtok_r(NULL, "\n", &saveptr)) {
+        if (sscanf(line, "Reg[%x] = 0x%x", &found_reg, &old_value) != 2 ||
+            found_reg != reg)
+            continue;
+        if (old_value > 0xff)
+            return -1;
+        new_value = (old_value & ~mask) | (value & mask);
+        if (new_value == old_value)
+            return 0;
+        snprintf(request, sizeof(request), "0x%02x 0x%02x", reg, new_value);
+        return qb_write_str(dir, "registers", request) < 0 ? -1 : 0;
+    }
+    return -1;
+}

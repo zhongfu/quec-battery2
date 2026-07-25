@@ -80,8 +80,9 @@ guard.
 
 ## Bounded charging configuration
 
-This fork makes the four previously dormant `/etc/config/qlbattery` settings
-effective. They are read once at startup from the `settings` section:
+This fork makes the stock charging settings and the optional voltage limit in
+`/etc/config/qlbattery` effective. They are read once at startup from the
+`settings` section:
 
 | Option | Fallback | Effective range | Policy |
 | --- | ---: | ---: | --- |
@@ -89,6 +90,7 @@ effective. They are read once at startup from the `settings` section:
 | `min_shutdown_mv` | 3400 mV | 3400–3800 mV | Sets the no-adapter low-voltage shutdown threshold |
 | `max_pd_vbus_mv` | 9800 mV | 0–9800 mV | Caps every PPS voltage request; values below 6600 mV disable PPS |
 | `pd_full_mv` | 4200 mV | 3401–4200 mV | Sets PPS eligibility and the pump-to-buck transition threshold |
+| `charge_limit_mv` | 0 (disabled) | 3800–4200 mV | Applies a non-terminating CV ceiling to buck charging and coordinated SGM41600/PPS voltage regulation |
 
 Values outside the ranges are clamped toward the safe limit. A malformed
 integer is ignored, leaving the prior/default value in effect. Detailed logging
@@ -98,6 +100,21 @@ These bounds only allow configuration to tighten the recovered stock policy:
 current and PPS voltage cannot exceed the stock maxima, shutdown cannot occur
 below the stock floor, and PPS cannot remain active above the stock full
 threshold.
+
+For example, a 4.00 V charge ceiling:
+
+```uci
+config battery 'settings'
+	option charge_limit_mv '4000'
+```
+
+When enabled, the daemon disables the SGM41542S termination bit and programs
+its `vreg` to the active minimum of the configured, thermal, and cycle-aging
+limits. For PPS charging it programs SGM41600 `BAT_OVP` and `VBAT_REG` with a
+200 mV regulation margin, disables the 650 ms regulation timeout, and lowers
+the PPS request when battery voltage reaches the same target. SGM41600
+regulation is quantized downward to its 25 mV protection steps; the SGM41542S
+uses its 10 mV CV steps.
 
 ## Enhanced safety behavior
 
