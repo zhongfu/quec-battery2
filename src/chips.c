@@ -124,21 +124,52 @@ invalid:
     return -1;
 }
 
-void qb_get_battery_online(struct qb_manager *cm)
+enum qb_battery_presence qb_battery_presence_from_raw(int raw_present)
 {
-    int present = cm->battery.present;
+    if (raw_present == 0)
+        return QB_BATTERY_ABSENT;
+    if (raw_present == 1)
+        return QB_BATTERY_PRESENT;
+    return QB_BATTERY_UNKNOWN;
+}
 
-    qb_read_int(QB_BATTERY_PATH, "present", &present);
-    cm->battery.present = present;
-    if (cm->battery.present == 0) {
+bool qb_battery_present(const struct qb_manager *cm)
+{
+    return cm->battery.presence == QB_BATTERY_PRESENT;
+}
+
+bool qb_battery_absent(const struct qb_manager *cm)
+{
+    return cm->battery.presence == QB_BATTERY_ABSENT;
+}
+
+int qb_get_battery_online(struct qb_manager *cm)
+{
+    int raw_present;
+
+    if (qb_read_int(QB_BATTERY_PATH, "present", &raw_present) < 0) {
+        cm->battery.presence = QB_BATTERY_UNKNOWN;
+        cm->battery.raw_present = -1;
+        return -1;
+    }
+
+    cm->battery.raw_present = raw_present;
+    cm->battery.presence = qb_battery_presence_from_raw(raw_present);
+    if (qb_battery_absent(cm)) {
         cm->buck_input_current_ua = 3000000;
         qb_set_sgm41542_int(cm, "ibus_iindpm", cm->buck_input_current_ua);
         cm->battery.temp_decic = 240;
         cm->temp_status = QB_TEMP_NORMAL;
         qb_set_pwm(true);
-    } else {
-        qb_set_pwm(false);
+        return 0;
     }
+    if (qb_battery_present(cm)) {
+        qb_set_pwm(false);
+        return 0;
+    }
+
+    cm->battery.presence = QB_BATTERY_UNKNOWN;
+    return -1;
 }
 
 int qb_set_sgm41542(struct qb_manager *cm, const char *attr, const char *value)
@@ -203,12 +234,12 @@ void qb_mos_on(struct qb_manager *cm, int port)
 
     qb_get_battery_online(cm);
     adapter_online = qb_adapter_online(cm);
-    temperature_bad = cm->battery.present == 1 &&
+    temperature_bad = qb_battery_present(cm) &&
                       (cm->battery.temp_decic <= -100 ||
                        cm->battery.temp_decic >= 600);
-    capacity_bad = cm->battery.present == 1 && cm->battery.capacity < 1 &&
+    capacity_bad = qb_battery_present(cm) && cm->battery.capacity < 1 &&
                    !adapter_online;
-    power_limited = cm->battery.present == 1 && cm->power_limit;
+    power_limited = qb_battery_present(cm) && cm->power_limit;
 
     if (temperature_bad) {
         qb_write_str(QB_SGM41542_PATH, port ? "mos2_pin" : "mos1_pin", "1");
@@ -294,7 +325,7 @@ void qb_enable_buck(struct qb_manager *cm, struct qb_pd_port *port)
     int voltage_mv = 5000;
 
     cm->buck_charge_current_ua = 300000;
-    if (cm->battery.present == 0 && cm->pda.power_role == QB_ROLE_SINK &&
+    if (qb_battery_absent(cm) && cm->pda.power_role == QB_ROLE_SINK &&
         cm->pdb.power_role == QB_ROLE_SINK)
         qb_ovp_on(cm, port == &cm->pda ? 1 : 0);
     else
@@ -356,7 +387,7 @@ void qb_enable_buck(struct qb_manager *cm, struct qb_pd_port *port)
         }
     }
 
-    if (cm->battery.present == 1) {
+    if (qb_battery_present(cm)) {
         qb_set_sgm41542_int(cm, "ichrg_curr", 300000);
         qb_set_sgm41542(cm, "charge_en", "1");
     }

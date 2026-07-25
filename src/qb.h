@@ -44,6 +44,12 @@ enum qb_cc_pin {
     QB_CC2 = 2,
 };
 
+enum qb_battery_presence {
+    QB_BATTERY_UNKNOWN = 0,
+    QB_BATTERY_ABSENT = 1,
+    QB_BATTERY_PRESENT = 2,
+};
+
 enum qb_mode {
     QB_MODE_NONE = 0,
     QB_MODE_PORT_A = 1,
@@ -142,7 +148,8 @@ struct qb_sgm41600 {
 };
 
 struct qb_battery {
-    int present;
+    enum qb_battery_presence presence;
+    int raw_present;
     int capacity;
     int voltage_mv;
     int current_ma;
@@ -241,7 +248,10 @@ bool qb_pps_voltage_matches(int requested_mv, int measured_mv);
 int qb_get_sgm41542_info(struct qb_manager *cm);
 int qb_get_sgm41600_info(struct qb_manager *cm);
 int qb_get_battery_info(struct qb_manager *cm);
-void qb_get_battery_online(struct qb_manager *cm);
+enum qb_battery_presence qb_battery_presence_from_raw(int raw_present);
+int qb_get_battery_online(struct qb_manager *cm);
+bool qb_battery_present(const struct qb_manager *cm);
+bool qb_battery_absent(const struct qb_manager *cm);
 int qb_set_sgm41542(struct qb_manager *cm, const char *attr, const char *value);
 int qb_set_sgm41542_int(struct qb_manager *cm, const char *attr, int value);
 int qb_set_sgm41600(struct qb_manager *cm, const char *attr, const char *value);

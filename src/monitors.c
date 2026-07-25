@@ -8,7 +8,7 @@ static bool qb_pump_ready_for(struct qb_manager *cm, struct qb_pd_port *port)
            cm->battery.telemetry_valid && port->working &&
            port->telemetry_valid && !cm->pump_error &&
            qb_pps_enabled(cm) && cm->charge_current_ma > 0 &&
-           port->supports_pps && cm->battery.present == 1 &&
+           port->supports_pps && qb_battery_present(cm) &&
            port->power_role == QB_ROLE_SINK &&
            cm->temp_status >= QB_TEMP_NORMAL &&
            cm->temp_status <= QB_TEMP_WARM;
@@ -19,7 +19,7 @@ static bool qb_pump_running_for(struct qb_manager *cm, struct qb_pd_port *port)
     return cm->pump.charge_status == 1 && cm->pump.telemetry_valid &&
            cm->battery.telemetry_valid && port->working &&
            port->telemetry_valid && !cm->pump_error &&
-           cm->battery.present == 1 && port->power_role == QB_ROLE_SINK;
+           qb_battery_present(cm) && port->power_role == QB_ROLE_SINK;
 }
 
 static void qb_pump_fallback_to_buck(struct qb_manager *cm,
@@ -64,7 +64,7 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
     while (qb_pump_running_for(cm, port)) {
         if (qb_interruptible_sleep(cm, 2))
             return;
-        if (cm->charge_mode_switching || cm->battery.present == 0)
+        if (cm->charge_mode_switching || !qb_battery_present(cm))
             return;
         if (qb_get_sgm41600_info(cm) < 0) {
             qb_pump_fallback_to_buck(cm, port, index);
@@ -124,7 +124,7 @@ static bool qb_buck_ready_for(struct qb_manager *cm, struct qb_pd_port *port)
     return cm->buck.working && cm->buck.telemetry_valid &&
            cm->battery.telemetry_valid && port->working &&
            port->telemetry_valid && cm->charge_current_ma > 0 &&
-           cm->battery.present == 1 && port->power_role == QB_ROLE_SINK &&
+           qb_battery_present(cm) && port->power_role == QB_ROLE_SINK &&
            cm->temp_status >= QB_TEMP_COOL &&
            cm->temp_status <= QB_TEMP_HOT;
 }
@@ -133,7 +133,7 @@ static bool qb_buck_running_for(struct qb_manager *cm, struct qb_pd_port *port)
 {
     return cm->buck.charge_status == 1 && cm->buck.telemetry_valid &&
            cm->battery.telemetry_valid && port->working &&
-           port->telemetry_valid && cm->battery.present == 1 &&
+           port->telemetry_valid && qb_battery_present(cm) &&
            port->power_role == QB_ROLE_SINK;
 }
 
@@ -152,7 +152,7 @@ static void qb_buck_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
             return;
         if (qb_interruptible_sleep(cm, 2))
             return;
-        if (cm->charge_mode_switching || cm->battery.present == 0)
+        if (cm->charge_mode_switching || !qb_battery_present(cm))
             break;
         if (qb_get_sgm41542_info(cm) < 0) {
             qb_disable_buck(cm);

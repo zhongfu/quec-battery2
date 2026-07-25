@@ -266,7 +266,7 @@ int qb_set_battery_cycle(struct qb_manager *cm)
     qb_raw_cycle = config.cycle_count;
 
     qb_get_battery_online(cm);
-    if (!cm->battery.present)
+    if (!qb_battery_present(cm))
         return -1;
     snprintf(value, sizeof(value), "%u", qb_raw_cycle);
     qb_write_str(QB_CW2217_PATH, "bat_cycle", value);
@@ -291,7 +291,7 @@ int qb_update_battery_cycle(struct qb_manager *cm)
         return -1;
     config.cycle_count = (uint16_t)cycle;
     if ((unsigned)config.cycle_count > qb_raw_cycle) {
-        if (!cm->battery.present || !qb_ql_set_config)
+        if (!qb_battery_present(cm) || !qb_ql_set_config)
             return -1;
         qb_ql_set_config(config);
         qb_raw_cycle = config.cycle_count;
@@ -323,7 +323,7 @@ static bool qb_check_gauge_accuracy(struct qb_manager *cm, time_t now,
     int estimated_capacity;
     char reason[128];
 
-    if (!cm->battery.present || cm->battery.current_ma < -149 ||
+    if (!qb_battery_present(cm) || cm->battery.current_ma < -149 ||
         cm->battery.current_ma > 149 || now == (time_t)-1 ||
         (*last_check != 0 && now - *last_check < 3600))
         return false;
@@ -460,11 +460,24 @@ void *qb_gauge_monitor(void *arg)
         bool danger = false;
         bool gauge_reset;
         int battery_info_status;
+        int presence_status;
         time_t now;
 
-        qb_get_battery_online(cm);
-        battery_info_status = qb_get_battery_info(cm);
-        if (cm->battery.present == 1 && battery_info_status < 0) {
+        presence_status = qb_get_battery_online(cm);
+        if (presence_status < 0) {
+            cm->charge_current_ma = 0;
+            cm->temp_status = QB_TEMP_OVERHEAT;
+            qb_disable_pump(cm);
+            qb_disable_buck(cm);
+            QBLOG(0x9ed, "battery presence unavailable raw:%d\n",
+                  cm->battery.raw_present);
+            sleep(3);
+            continue;
+        }
+
+        battery_info_status = qb_battery_present(cm) ?
+                              qb_get_battery_info(cm) : 0;
+        if (qb_battery_present(cm) && battery_info_status < 0) {
             cm->charge_current_ma = 0;
             cm->temp_status = QB_TEMP_OVERHEAT;
             QBLOG(0x9ed, "battery telemetry unavailable failures:%u\n",
@@ -472,7 +485,7 @@ void *qb_gauge_monitor(void *arg)
             sleep(3);
             continue;
         }
-        if (!cm->battery.present)
+        if (qb_battery_absent(cm))
             cm->battery.temp_decic = -5;
         qb_update_charge_limits(cm);
 
@@ -481,9 +494,9 @@ void *qb_gauge_monitor(void *arg)
               cm->battery.capacity, cm->battery.temp_decic,
               cm->battery.current_ma, cm->buck.vbat_adc_mv,
               cm->full_voltage_mv, cm->charge_current_ma,
-              cm->battery.present, cm->temp_status, cm->mode, cm->work_mode);
+              cm->battery.raw_present, cm->temp_status, cm->mode, cm->work_mode);
 
-        if (cm->battery.present) {
+        if (qb_battery_present(cm)) {
             qb_update_capacity_reserve(cm, &configured_threshold,
                                        &mos1_pin, &mos2_pin);
             if ((uint32_t)cm->battery.temp_decic - 101U > 398U) {
@@ -511,7 +524,7 @@ void *qb_gauge_monitor(void *arg)
                 danger_count = 0;
             }
             qb_update_hiz_state(cm);
-        } else {
+        } else if (qb_battery_absent(cm)) {
             danger_count = 0;
             if (cm->power_limit) {
                 qb_set_capacity_limit_state(0);

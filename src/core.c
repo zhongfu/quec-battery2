@@ -6,8 +6,9 @@
 
 static bool qb_pump_allowed(struct qb_manager *cm, struct qb_pd_port *port, int vbat_mv)
 {
-    return cm->pump.telemetry_valid && port->telemetry_valid &&
-           cm->battery.telemetry_valid && cm->charge_current_ma > 0 &&
+    return qb_battery_present(cm) && cm->pump.telemetry_valid &&
+           port->telemetry_valid && cm->battery.telemetry_valid &&
+           cm->charge_current_ma > 0 &&
            qb_pps_enabled(cm) && vbat_mv > 3400 &&
            vbat_mv < cm->pd_full_mv &&
            port->supports_pps &&
@@ -119,7 +120,7 @@ int qb_select_qc_max_voltage(struct qb_manager *cm)
         qb_mos_off(cm, 1);
     qb_disable_buck(cm);
     qb_ovp_on(cm, 1);
-    if (cm->battery.present == 0 && cm->pda.power_role == QB_ROLE_SINK &&
+    if (qb_battery_absent(cm) && cm->pda.power_role == QB_ROLE_SINK &&
         cm->pdb.power_role == QB_ROLE_SINK)
         qb_ovp_on(cm, 0);
     else
@@ -253,15 +254,19 @@ int qb_enter_mode1(struct qb_manager *cm)
         } else if (cm->pda.power_role == QB_ROLE_SINK) {
             qb_mos_off(cm, 0); qb_ovp_on(cm, 0);
         }
-        if (cm->battery.present == 0) qb_ovp_on(cm, 1); else qb_ovp_off(cm, 1);
+        if (qb_battery_absent(cm)) qb_ovp_on(cm, 1); else qb_ovp_off(cm, 1);
         qb_mos_off(cm, 1);
     }
     cm->change_power_role = false;
     if (!qb_queue_empty(cm)) goto done;
-    if (cm->battery.present != 0) {
+    if (qb_battery_present(cm)) {
         if (cm->pda.power_role == QB_ROLE_SINK) qb_mode1_charge(cm); else qb_no_charge(cm);
         cm->work_mode = QB_MODE_PORT_A;
         return 1;
+    }
+    if (!qb_battery_absent(cm)) {
+        qb_no_charge(cm);
+        goto done;
     }
     qb_enable_buck(cm, &cm->pda);
 done:
@@ -279,15 +284,19 @@ int qb_enter_mode2(struct qb_manager *cm)
         } else if (cm->pdb.power_role == QB_ROLE_SINK) {
             qb_mos_off(cm, 1); qb_ovp_on(cm, 1);
         }
-        if (cm->battery.present == 0) qb_ovp_on(cm, 0); else qb_ovp_off(cm, 0);
+        if (qb_battery_absent(cm)) qb_ovp_on(cm, 0); else qb_ovp_off(cm, 0);
         qb_mos_off(cm, 0);
     }
     cm->change_power_role = false;
     if (!qb_queue_empty(cm)) goto done;
-    if (cm->battery.present != 0) {
+    if (qb_battery_present(cm)) {
         if (cm->pdb.power_role == QB_ROLE_SINK) qb_mode2_charge(cm); else qb_no_charge(cm);
         cm->work_mode = QB_MODE_PORT_B;
         return 1;
+    }
+    if (!qb_battery_absent(cm)) {
+        qb_no_charge(cm);
+        goto done;
     }
     qb_get_port_info(&cm->pdb, false);
     if (!qb_select_qc_max_voltage(cm))
@@ -349,7 +358,7 @@ int qb_enter_mode3(struct qb_manager *cm)
             return 0;
         }
 
-        if (cm->battery.present != 0) {
+        if (qb_battery_present(cm)) {
             if (cm->pda.power_role == QB_ROLE_SINK ||
                 cm->pdb.power_role == QB_ROLE_SINK)
                 qb_mode3_charge(cm);
@@ -359,6 +368,11 @@ int qb_enter_mode3(struct qb_manager *cm)
             return role_status;
         }
 
+        if (!qb_battery_absent(cm)) {
+            qb_no_charge(cm);
+            cm->work_mode = QB_MODE_BOTH;
+            return role_status;
+        }
         if (role_status == 1) {
             qb_get_port_info(&cm->pda, false);
             qb_enable_buck(cm, &cm->pda);

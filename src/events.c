@@ -105,16 +105,19 @@ static void qb_copy_event(char destination[QB_EVENT_SIZE], const char *source)
 
 static void qb_dead_battery_restore(struct qb_manager *cm)
 {
-    int present = -1;
-    int remaining = 11;
+    int present;
 
-    qb_read_int(QB_BATTERY_PATH, "present", &present);
-    while (present && --remaining) {
-        cm->dead_battery_restore = true;
-        qb_read_int(QB_BATTERY_PATH, "present", &present);
-        usleep(500000);
+    if (qb_read_int(QB_BATTERY_PATH, "present", &present) < 0 ||
+        present != 1)
+        return;
+
+    cm->dead_battery_restore = true;
+    for (int remaining = 10; remaining > 0 && present == 1; remaining--) {
         qb_write_str(QB_SGM41542_PATH, "ichrg_curr", "150000");
         qb_write_str(QB_SGM41542_PATH, "charge_en", "1");
+        usleep(500000);
+        if (qb_read_int(QB_BATTERY_PATH, "present", &present) < 0)
+            break;
     }
     cm->dead_battery_restore = false;
 }
@@ -249,6 +252,8 @@ void *qb_event_monitor(void *arg)
             qb_apply_port_event(cm, &cm->pdb, event, 1);
         else if (strstr(event, "battery=offline")) {
             cm->battery_offline_event = true;
+            cm->battery.presence = QB_BATTERY_ABSENT;
+            cm->battery.raw_present = 0;
             qb_reset_charge_state(cm);
             cm->work_mode = QB_MODE_RESELECT;
             qb_disable_pump_cfg(cm, &cm->pda);
@@ -258,6 +263,9 @@ void *qb_event_monitor(void *arg)
             qb_select_mode(cm);
             cm->battery_offline_event = false;
         } else if (strstr(event, "battery=online") || strstr(event, "battery=dead")) {
+            cm->battery.presence = QB_BATTERY_UNKNOWN;
+            cm->battery.raw_present = -1;
+            qb_get_battery_online(cm);
             qb_reset_charge_state(cm);
             cm->work_mode = QB_MODE_RESELECT;
             qb_set_battery_cycle(cm);

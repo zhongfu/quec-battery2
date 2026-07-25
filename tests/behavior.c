@@ -590,6 +590,28 @@ static void test_fixed_charge_ramp(void)
     assert(cm.fixed_charge_current_ma == 0);
 }
 
+static void test_battery_presence_policy(void)
+{
+    struct qb_manager cm;
+
+    memset(&cm, 0, sizeof(cm));
+    cm.battery.presence = qb_battery_presence_from_raw(-1);
+    assert(!qb_battery_present(&cm));
+    assert(!qb_battery_absent(&cm));
+
+    cm.battery.presence = qb_battery_presence_from_raw(0);
+    assert(!qb_battery_present(&cm));
+    assert(qb_battery_absent(&cm));
+
+    cm.battery.presence = qb_battery_presence_from_raw(1);
+    assert(qb_battery_present(&cm));
+    assert(!qb_battery_absent(&cm));
+
+    cm.battery.presence = qb_battery_presence_from_raw(2);
+    assert(!qb_battery_present(&cm));
+    assert(!qb_battery_absent(&cm));
+}
+
 static void test_charge_state_flags(void)
 {
     struct qb_manager cm;
@@ -618,6 +640,7 @@ int main(void)
     test_config_bounds_and_helpers();
     test_sysfs_integer_validation();
     test_watchdog_socket_connect();
+    test_battery_presence_policy();
     test_initial_temperature_policy();
     test_temperature_policy_matrix();
     test_pps_policy_matrix();

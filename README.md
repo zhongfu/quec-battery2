@@ -151,6 +151,15 @@ cycle-aging ceiling, using the same minimum-of-limits rule as steady-state
 policy. A hot battery therefore starts at 4180 mV rather than being temporarily
 overwritten by a 4400 mV low-cycle ceiling.
 
+### Battery-presence normalization
+
+The gauge `present` value is normalized to `unknown`, `absent`, or `present`.
+Only the exact value `1` permits charging. A read failure or malformed value
+disables the charge paths without being mistaken for battery-free operation.
+The exact value `0` retains the stock battery-free power path: the daemon
+negotiates an input source and configures input current, but does not enable
+battery charging.
+
 ## Behavior reference
 
 See [`docs/original-daemon.md`](docs/original-daemon.md) before changing charging

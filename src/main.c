@@ -19,6 +19,7 @@ static void qb_signal_handler(int signo)
 static void qb_manager_init(struct qb_manager *cm)
 {
     memset(cm, 0, sizeof(*cm));
+    cm->battery.raw_present = -1;
     cm->max_current_ma = QB_STOCK_MAX_CURRENT_MA;
     cm->min_shutdown_mv = QB_STOCK_MIN_SHUTDOWN_MV;
     cm->max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
@@ -68,7 +69,8 @@ int main(void)
     qb_get_port_info(&cm->pdb, true);
     qb_get_sgm41542_info(cm);
     qb_get_sgm41600_info(cm);
-    qb_get_battery_info(cm);
+    if (qb_battery_present(cm))
+        qb_get_battery_info(cm);
 
     if (pthread_create(&watchdog_thread, NULL, qb_watchdog_monitor, cm) != 0 ||
         pthread_create(&gauge_thread, NULL, qb_gauge_monitor, cm) != 0 ||
