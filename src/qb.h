@@ -10,6 +10,14 @@
 #define QB_EVENT_CAPACITY 128
 #define QB_EVENT_SIZE 32
 
+#define QB_STOCK_MAX_CURRENT_MA 5300
+#define QB_STOCK_MIN_SHUTDOWN_MV 3400
+#define QB_SAFE_MAX_SHUTDOWN_MV 3800
+#define QB_PPS_MIN_VOLTAGE_MV 6600
+#define QB_STOCK_MAX_PPS_VOLTAGE_MV 9800
+#define QB_MIN_PD_FULL_MV 3401
+#define QB_STOCK_PD_FULL_MV 4200
+
 #define QB_LOG_FLAG "/tmp/quec_battery_log"
 #define QB_UCI_CONFIG "/etc/config/qlbattery"
 #define QB_WDT_SOCKET "/tmp/wdt_server.sock"
@@ -149,7 +157,6 @@ struct qb_manager {
     int max_current_ma;
     int min_shutdown_mv;
     int max_pd_vbus_mv;
-    int config_pd_full_mv;
 
     struct qb_pd_port pda;
     struct qb_pd_port pdb;
@@ -266,6 +273,11 @@ int qb_receive_uevents(struct qb_manager *cm);
 
 int qb_load_config(struct qb_manager *cm);
 int qb_load_config_file(struct qb_manager *cm, const char *path);
+int qb_limit_charge_current(const struct qb_manager *cm, int requested_ma);
+bool qb_pps_enabled(const struct qb_manager *cm);
+int qb_limit_pps_voltage(const struct qb_manager *cm, int requested_mv);
+bool qb_low_voltage_danger(const struct qb_manager *cm, bool adapter_online,
+                           int battery_mv);
 void qb_update_charge_limits(struct qb_manager *cm);
 void qb_init_temp_status(struct qb_manager *cm);
 int qb_set_battery_cycle(struct qb_manager *cm);

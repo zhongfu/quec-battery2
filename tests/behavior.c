@@ -230,7 +230,7 @@ static void test_config_loader(void)
     cm.max_current_ma = 5300;
     cm.min_shutdown_mv = 3400;
     cm.max_pd_vbus_mv = 9800;
-    cm.config_pd_full_mv = 4050;
+    cm.pd_full_mv = QB_STOCK_PD_FULL_MV;
     snprintf(path, sizeof(path), "/tmp/qb-config-test-%ld", (long)getpid());
     fp = fopen(path, "w");
     assert(fp != NULL);
@@ -245,9 +245,94 @@ static void test_config_loader(void)
     assert(qb_load_config_file(&cm, path) == 0);
     unlink(path);
     assert(cm.max_current_ma == 5100);
-    assert(cm.min_shutdown_mv == 3350);
+    assert(cm.min_shutdown_mv == QB_STOCK_MIN_SHUTDOWN_MV);
     assert(cm.max_pd_vbus_mv == 9600);
-    assert(cm.config_pd_full_mv == 4025);
+    assert(cm.pd_full_mv == 4025);
+}
+
+static void test_config_bounds_and_helpers(void)
+{
+    struct qb_manager cm;
+    char path[96];
+    FILE *fp;
+
+    memset(&cm, 0, sizeof(cm));
+    cm.max_current_ma = QB_STOCK_MAX_CURRENT_MA;
+    cm.min_shutdown_mv = QB_STOCK_MIN_SHUTDOWN_MV;
+    cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
+    cm.pd_full_mv = QB_STOCK_PD_FULL_MV;
+    snprintf(path, sizeof(path), "/tmp/qb-config-bounds-%ld", (long)getpid());
+    fp = fopen(path, "w");
+    assert(fp != NULL);
+    fputs("config battery 'settings'\n"
+          "\toption max_current_ma '6000'\n"
+          "\toption min_shutdown_mv '5000'\n"
+          "\toption max_pd_vbus_mv '12000'\n"
+          "\toption pd_full_mv '1000'\n", fp);
+    fclose(fp);
+    assert(qb_load_config_file(&cm, path) == 0);
+    assert(cm.max_current_ma == QB_STOCK_MAX_CURRENT_MA);
+    assert(cm.min_shutdown_mv == QB_SAFE_MAX_SHUTDOWN_MV);
+    assert(cm.max_pd_vbus_mv == QB_STOCK_MAX_PPS_VOLTAGE_MV);
+    assert(cm.pd_full_mv == QB_MIN_PD_FULL_MV);
+
+    cm.max_current_ma = QB_STOCK_MAX_CURRENT_MA;
+    cm.min_shutdown_mv = QB_STOCK_MIN_SHUTDOWN_MV;
+    cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
+    cm.pd_full_mv = QB_STOCK_PD_FULL_MV;
+    fp = fopen(path, "w");
+    assert(fp != NULL);
+    fputs("config battery 'settings'\n"
+          "\toption max_current_ma '0'\n"
+          "\toption min_shutdown_mv 'invalid'\n"
+          "\toption max_pd_vbus_mv '5000'\n"
+          "\toption pd_full_mv '4050'\n", fp);
+    fclose(fp);
+    assert(qb_load_config_file(&cm, path) == 0);
+    unlink(path);
+    assert(cm.max_current_ma == 0);
+    assert(cm.min_shutdown_mv == QB_STOCK_MIN_SHUTDOWN_MV);
+    assert(cm.max_pd_vbus_mv == 5000);
+    assert(cm.pd_full_mv == 4050);
+    assert(qb_limit_charge_current(&cm, 5300) == 0);
+    assert(!qb_pps_enabled(&cm));
+    assert(qb_limit_pps_voltage(&cm, 8000) == 0);
+
+    cm.max_current_ma = 1200;
+    cm.max_pd_vbus_mv = 9000;
+    assert(qb_limit_charge_current(&cm, 5300) == 1200);
+    assert(qb_limit_charge_current(&cm, -1) == 0);
+    assert(qb_pps_enabled(&cm));
+    assert(qb_limit_pps_voltage(&cm, 6000) == QB_PPS_MIN_VOLTAGE_MV);
+    assert(qb_limit_pps_voltage(&cm, 9500) == 9000);
+
+    cm.battery.temp_decic = 200;
+    cm.buck.vbat_adc_mv = 4000;
+    qb_power_limit_state = 0;
+    qb_update_charge_limits(&cm);
+    assert(cm.charge_current_ma == 1200);
+
+    assert(qb_low_voltage_danger(&cm, false, 3399));
+    assert(!qb_low_voltage_danger(&cm, false, 3400));
+    assert(!qb_low_voltage_danger(&cm, true, 3000));
+
+    struct qb_manager policy;
+    memset(&policy, 0, sizeof(policy));
+    policy.max_current_ma = QB_STOCK_MAX_CURRENT_MA;
+    policy.max_pd_vbus_mv = 9000;
+    policy.pd_full_mv = 4000;
+    policy.charge_current_ma = QB_STOCK_MAX_CURRENT_MA;
+    policy.pps_voltage_mv = 9000;
+    policy.pump.vbat_adc_mv = 4050;
+    policy.pump.ibat_adc_ma = 1000;
+    policy.pump.ibus_adc_ma = 1;
+    qb_pump_pps_control(&policy);
+    assert(policy.pps_voltage_mv == 9000);
+
+    policy.pd_full_mv = 4100;
+    policy.pps_voltage_mv = 9000;
+    qb_pump_pps_control(&policy);
+    assert(policy.pps_voltage_mv == 9000);
 }
 
 static void test_initial_temperature_policy(void)
@@ -274,6 +359,7 @@ static void test_initial_temperature_policy(void)
         memset(&cm, 0, sizeof(cm));
         cm.full_voltage_mv = 4400;
         cm.charge_current_ma = 5300;
+        cm.max_current_ma = QB_STOCK_MAX_CURRENT_MA;
         cm.v42_capacity = 86;
         cm.buck.vbat_adc_mv = 4000;
         cm.battery.temp_decic = cases[i].temp;
@@ -307,6 +393,7 @@ static void test_temperature_policy_matrix(void)
                         got.full_voltage_mv = 4321;
                         got.charge_current_ma = 777;
                         got.v42_capacity = 66;
+                        got.max_current_ma = QB_STOCK_MAX_CURRENT_MA;
                         got.battery.temp_decic = temperatures[t];
                         got.battery.cycle_count = cycles[c];
                         got.buck.vbat_adc_mv = battery_mv[v];
@@ -338,6 +425,7 @@ static void test_pps_policy_matrix(void)
                     memset(&got, 0, sizeof(got));
                     got.pd_full_mv = 4200;
                     got.charge_current_ma = 5300;
+                    got.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
                     got.pps_voltage_mv = pps;
                     got.pump.vbat_adc_mv = vbat;
                     got.pump.ibat_adc_ma = ibat;
@@ -405,11 +493,12 @@ int main(void)
     test_pd_inventory();
     test_event_queue();
     test_config_loader();
+    test_config_bounds_and_helpers();
     test_initial_temperature_policy();
     test_temperature_policy_matrix();
     test_pps_policy_matrix();
     test_fixed_charge_ramp();
     test_charge_state_flags();
-    puts("stock behavior regression suite passed");
+    puts("behavior regression suite passed");
     return 0;
 }

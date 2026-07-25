@@ -5,9 +5,11 @@
 static bool qb_pump_ready_for(struct qb_manager *cm, struct qb_pd_port *port)
 {
     return cm->pump.working && port->working && !cm->pump_error &&
+           qb_pps_enabled(cm) && cm->charge_current_ma > 0 &&
            port->supports_pps && cm->battery.present == 1 &&
            port->power_role == QB_ROLE_SINK &&
-           cm->temp_status >= QB_TEMP_NORMAL && cm->temp_status <= QB_TEMP_WARM;
+           cm->temp_status >= QB_TEMP_NORMAL &&
+           cm->temp_status <= QB_TEMP_WARM;
 }
  
 static bool qb_pump_running_for(struct qb_manager *cm, struct qb_pd_port *port)
@@ -20,7 +22,8 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
 {
     int initial_current;
 
-    cm->pps_voltage_mv = cm->pump.vbat_adc_mv * 220 / 100;
+    cm->pps_voltage_mv = qb_limit_pps_voltage(
+        cm, cm->pump.vbat_adc_mv * 220 / 100);
     initial_current = (cm->charge_current_ma / 200) * 100;
     qb_request_pdo(port, cm->pps_voltage_mv, initial_current);
     qb_ovp_off(cm, index ^ 1);
@@ -56,7 +59,8 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
             }
             return;
         }
-        qb_request_pdo(port, cm->pps_voltage_mv, 2650);
+        qb_request_pdo(port, cm->pps_voltage_mv,
+                       qb_limit_charge_current(cm, 2650));
     }
 
     qb_disable_pump(cm);
@@ -92,9 +96,11 @@ void *qb_pump_monitor(void *arg)
 
 static bool qb_buck_ready_for(struct qb_manager *cm, struct qb_pd_port *port)
 {
-    return cm->buck.working && port->working && cm->battery.present == 1 &&
+    return cm->buck.working && port->working &&
+           cm->charge_current_ma > 0 && cm->battery.present == 1 &&
            port->power_role == QB_ROLE_SINK &&
-           cm->temp_status >= QB_TEMP_COOL && cm->temp_status <= QB_TEMP_HOT;
+           cm->temp_status >= QB_TEMP_COOL &&
+           cm->temp_status <= QB_TEMP_HOT;
 }
 
 static bool qb_buck_running_for(struct qb_manager *cm, struct qb_pd_port *port)

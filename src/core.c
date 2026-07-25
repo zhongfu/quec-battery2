@@ -6,8 +6,12 @@
 
 static bool qb_pump_allowed(struct qb_manager *cm, struct qb_pd_port *port, int vbat_mv)
 {
-    return vbat_mv > 3400 && vbat_mv < cm->pd_full_mv && port->supports_pps &&
-           cm->temp_status >= QB_TEMP_NORMAL && cm->temp_status <= QB_TEMP_WARM;
+    return cm->charge_current_ma > 0 && qb_pps_enabled(cm) &&
+           vbat_mv > 3400 && vbat_mv < cm->pd_full_mv &&
+           port->supports_pps &&
+           port->pps_min_voltage_mv <= cm->max_pd_vbus_mv &&
+           cm->temp_status >= QB_TEMP_NORMAL &&
+           cm->temp_status <= QB_TEMP_WARM;
 }
 
 void qb_no_charge(struct qb_manager *cm)
@@ -30,10 +34,7 @@ void qb_pump_pps_control(struct qb_manager *cm)
         next = cm->pps_voltage_mv + 100;
         if (next >= vbat * 235 / 100)
             next = cm->pps_voltage_mv;
-        if (next < 6600)
-            next = 6600;
-        else if (next > 9800)
-            next = 9800;
+        next = qb_limit_pps_voltage(cm, next);
         cm->pps_voltage_mv = next;
     }
 
@@ -41,10 +42,7 @@ void qb_pump_pps_control(struct qb_manager *cm)
         next = cm->pps_voltage_mv - 50;
         if (next <= vbat * 202 / 100)
             next = cm->pps_voltage_mv;
-        if (next < 6600)
-            next = 6600;
-        else if (next > 9800)
-            next = 9800;
+        next = qb_limit_pps_voltage(cm, next);
         cm->pps_voltage_mv = next;
     }
 

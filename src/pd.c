@@ -160,11 +160,20 @@ void qb_request_pdo(struct qb_pd_port *port, int voltage_mv, int current_ma)
         if (p->current_a * 1000 < selected_current)
             selected_current = p->current_a * 1000;
         if (p->pps) {
-            if (voltage_mv < p->min_voltage_v * 1000 ||
-                voltage_mv > p->max_voltage_v * 1000)
+            int requested_voltage_mv = voltage_mv;
+
+            if (port->manager) {
+                if (!qb_pps_enabled(port->manager))
+                    continue;
+                if (requested_voltage_mv > port->manager->max_pd_vbus_mv)
+                    requested_voltage_mv = port->manager->max_pd_vbus_mv;
+            }
+            if (requested_voltage_mv < p->min_voltage_v * 1000 ||
+                requested_voltage_mv > p->max_voltage_v * 1000)
                 continue;
-            snprintf(request, sizeof(request), "%d  %d", voltage_mv, selected_current);
-            p->requested_voltage_mv = voltage_mv;
+            snprintf(request, sizeof(request), "%d  %d",
+                     requested_voltage_mv, selected_current);
+            p->requested_voltage_mv = requested_voltage_mv;
         } else {
             if (voltage_mv != p->min_voltage_v * 1000)
                 continue;

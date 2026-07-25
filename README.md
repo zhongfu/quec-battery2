@@ -27,8 +27,8 @@ install it on hardware without a recovery path and automatic rollback.
   - `events.c` — kernel uevent receiver and event dispatcher
   - `thermal_events.c` — thermal generic-netlink listener
   - `watchdog.c` — charger and system watchdog handling
-  - `config.c` — stock `qlbattery` configuration parsing
-- `tests/behavior.c` — deterministic stock-behavior regression suite
+  - `config.c` — validated `qlbattery` parsing and bounded policy helpers
+- `tests/behavior.c` — stock-behavior and enhanced-policy regression suite
 - `docs/original-daemon.md` — detailed description of the recovered stock
   daemon behavior, thresholds, state machine, configuration, and quirks
 - `Makefile` — native build, test, and clean targets
@@ -63,20 +63,41 @@ make clean
 make test
 ```
 
-The suite covers PDO parsing and inventory, configuration loading, event queue
-behavior, thermal hysteresis and cycle limits, PPS voltage control, fixed-charge
-current ramping, and charger state transitions. Its policy matrices encode
-threshold and boundary behavior recovered from the stock binary.
+The suite covers PDO parsing and inventory, bounded configuration behavior,
+event queue behavior, thermal hysteresis and cycle limits, PPS voltage control,
+fixed-charge current ramping, and charger state transitions. Its policy matrices
+also encode threshold and boundary behavior recovered from the stock binary.
 
 A passing run prints:
 
 ```text
-stock behavior regression suite passed
+behavior regression suite passed
 ```
 
 The tests do not emulate the target's kernel drivers. Hardware validation still
 requires the actual sysfs interfaces and should be performed under a rollback
 guard.
+
+## Bounded charging configuration
+
+This fork makes the four previously dormant `/etc/config/qlbattery` settings
+effective. They are read once at startup from the `settings` section:
+
+| Option | Fallback | Effective range | Policy |
+| --- | ---: | ---: | --- |
+| `max_current_ma` | 5300 mA | 0–5300 mA | Caps every thermal charging-current result; `0` disables buck and pump charging |
+| `min_shutdown_mv` | 3400 mV | 3400–3800 mV | Sets the no-adapter low-voltage shutdown threshold |
+| `max_pd_vbus_mv` | 9800 mV | 0–9800 mV | Caps every PPS voltage request; values below 6600 mV disable PPS |
+| `pd_full_mv` | 4200 mV | 3401–4200 mV | Sets PPS eligibility and the pump-to-buck transition threshold |
+
+Values outside the ranges are clamped toward the safe limit. A malformed
+integer is ignored, leaving the prior/default value in effect. Detailed logging
+reports both the raw and effective value when `/tmp/quec_battery_log` exists.
+
+These bounds only allow configuration to tighten the recovered stock policy:
+current and PPS voltage cannot exceed the stock maxima, shutdown cannot occur
+below the stock floor, and PPS cannot remain active above the stock full
+threshold.
 
 ## Behavior reference
 

@@ -1,6 +1,8 @@
 #include "qb.h"
 
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,24 +19,104 @@ static void qb_unquote_config(char *value)
     }
 }
 
+static bool qb_parse_config_int(const char *value, int *result)
+{
+    char *end;
+    long parsed;
+
+    errno = 0;
+    parsed = strtol(value, &end, 10);
+    if (errno || end == value || *end != '\0' ||
+        parsed < INT_MIN || parsed > INT_MAX)
+        return false;
+    *result = (int)parsed;
+    return true;
+}
+
+static int qb_clamp(int value, int minimum, int maximum)
+{
+    if (value < minimum)
+        return minimum;
+    if (value > maximum)
+        return maximum;
+    return value;
+}
+
+int qb_limit_charge_current(const struct qb_manager *cm, int requested_ma)
+{
+    if (requested_ma <= 0 || cm->max_current_ma <= 0)
+        return 0;
+    return requested_ma < cm->max_current_ma ? requested_ma : cm->max_current_ma;
+}
+
+bool qb_pps_enabled(const struct qb_manager *cm)
+{
+    return cm->max_pd_vbus_mv >= QB_PPS_MIN_VOLTAGE_MV;
+}
+
+int qb_limit_pps_voltage(const struct qb_manager *cm, int requested_mv)
+{
+    if (!qb_pps_enabled(cm))
+        return 0;
+    return qb_clamp(requested_mv, QB_PPS_MIN_VOLTAGE_MV,
+                    cm->max_pd_vbus_mv);
+}
+
+bool qb_low_voltage_danger(const struct qb_manager *cm, bool adapter_online,
+                           int battery_mv)
+{
+    return !adapter_online && battery_mv < cm->min_shutdown_mv;
+}
+
+static void qb_validate_config(struct qb_manager *cm)
+{
+    int raw_max_current_ma = cm->max_current_ma;
+    int raw_min_shutdown_mv = cm->min_shutdown_mv;
+    int raw_max_pd_vbus_mv = cm->max_pd_vbus_mv;
+    int raw_pd_full_mv = cm->pd_full_mv;
+
+    cm->max_current_ma =
+        qb_clamp(cm->max_current_ma, 0, QB_STOCK_MAX_CURRENT_MA);
+    cm->min_shutdown_mv =
+        qb_clamp(cm->min_shutdown_mv, QB_STOCK_MIN_SHUTDOWN_MV,
+                 QB_SAFE_MAX_SHUTDOWN_MV);
+    cm->max_pd_vbus_mv =
+        qb_clamp(cm->max_pd_vbus_mv, 0, QB_STOCK_MAX_PPS_VOLTAGE_MV);
+    cm->pd_full_mv =
+        qb_clamp(cm->pd_full_mv, QB_MIN_PD_FULL_MV, QB_STOCK_PD_FULL_MV);
+
+    QBLOG(0xd, "max_current_ma raw:%d effective:%d\n",
+          raw_max_current_ma, cm->max_current_ma);
+    QBLOG(0xf, "min_shutdown_mv raw:%d effective:%d\n",
+          raw_min_shutdown_mv, cm->min_shutdown_mv);
+    QBLOG(0x11, "max_pd_vbus_mv raw:%d effective:%d\n",
+          raw_max_pd_vbus_mv, cm->max_pd_vbus_mv);
+    QBLOG(0x13, "pd_full_mv raw:%d effective:%d\n",
+          raw_pd_full_mv, cm->pd_full_mv);
+}
+
 static void qb_parse_config_line(struct qb_manager *cm, char *line)
 {
     char key[64];
     char value[64];
+    int parsed;
 
     while (isspace((unsigned char)*line))
         line++;
     if (sscanf(line, "option %63s %63s", key, value) != 2)
         return;
     qb_unquote_config(value);
+    if (!qb_parse_config_int(value, &parsed))
+        return;
+
     if (strcmp(key, "max_current_ma") == 0)
-        cm->max_current_ma = atoi(value);
+        cm->max_current_ma = parsed;
     else if (strcmp(key, "min_shutdown_mv") == 0)
-        cm->min_shutdown_mv = atoi(value);
+        cm->min_shutdown_mv = parsed;
     else if (strcmp(key, "max_pd_vbus_mv") == 0)
-        cm->max_pd_vbus_mv = atoi(value);
+        cm->max_pd_vbus_mv = parsed;
     else if (strcmp(key, "pd_full_mv") == 0)
-        cm->config_pd_full_mv = atoi(value);
+        cm->pd_full_mv = parsed;
 }
 
 int qb_load_config_file(struct qb_manager *cm, const char *path)
@@ -66,10 +148,7 @@ int qb_load_config_file(struct qb_manager *cm, const char *path)
             qb_parse_config_line(cm, p);
     }
     fclose(fp);
-    QBLOG(0xd, "bat_cfg_uci max_current_ma: %d\n", cm->max_current_ma);
-    QBLOG(0xf, "bat_cfg_uci min_shutdown_mv: %d\n", cm->min_shutdown_mv);
-    QBLOG(0x11, "bat_cfg_uci max_pd_vbus_mv: %d\n", cm->max_pd_vbus_mv);
-    QBLOG(0x13, "bat_cfg_uci pd_full_mv: %d\n", cm->config_pd_full_mv);
+    qb_validate_config(cm);
     return 0;
 }
 

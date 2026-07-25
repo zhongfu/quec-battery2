@@ -19,13 +19,12 @@ static void qb_signal_handler(int signo)
 static void qb_manager_init(struct qb_manager *cm)
 {
     memset(cm, 0, sizeof(*cm));
-    cm->max_current_ma = 5300;
-    cm->min_shutdown_mv = 3400;
-    cm->max_pd_vbus_mv = 9800;
-    cm->config_pd_full_mv = 4050;
-    cm->pd_full_mv = 4200;
+    cm->max_current_ma = QB_STOCK_MAX_CURRENT_MA;
+    cm->min_shutdown_mv = QB_STOCK_MIN_SHUTDOWN_MV;
+    cm->max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
+    cm->pd_full_mv = QB_STOCK_PD_FULL_MV;
     cm->full_voltage_mv = 4400;
-    cm->charge_current_ma = 5300;
+    cm->charge_current_ma = QB_STOCK_MAX_CURRENT_MA;
     cm->fixed_charge_current_ma = 300;
     cm->mode = QB_MODE_NONE;
     cm->work_mode = QB_MODE_RESELECT;
@@ -39,6 +38,8 @@ static void qb_manager_init(struct qb_manager *cm)
     pthread_mutex_init(&cm->reset_mutex, NULL);
     pthread_mutex_init(&cm->events.mutex, NULL);
     qb_load_config(cm);
+    cm->charge_current_ma =
+        qb_limit_charge_current(cm, cm->charge_current_ma);
 }
 
 int main(void)

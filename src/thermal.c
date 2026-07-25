@@ -182,7 +182,8 @@ static void qb_apply_thermal_limits(struct qb_manager *cm, int full_mv,
 
     if (qb_power_limit_state == 1) {
         cm->full_voltage_mv = 4180;
-        cm->charge_current_ma = cm->buck.vbat_adc_mv > 3000 ? 1060 : 275;
+        cm->charge_current_ma = qb_limit_charge_current(
+            cm, cm->buck.vbat_adc_mv > 3000 ? 1060 : 275);
         cm->temp_status = QB_TEMP_HOT;
         return;
     }
@@ -197,7 +198,8 @@ static void qb_apply_thermal_limits(struct qb_manager *cm, int full_mv,
     cycle_limit = qb_cycle_voltage_limit(cm->battery.cycle_count);
     cm->full_voltage_mv = full_mv < cycle_limit ? full_mv : cycle_limit;
     cm->temp_status = status;
-    cm->charge_current_ma = cm->buck.vbat_adc_mv < 3001 ? 275 : current_ma;
+    cm->charge_current_ma = qb_limit_charge_current(
+        cm, cm->buck.vbat_adc_mv < 3001 ? 275 : current_ma);
     cm->v42_capacity = qb_cycle_v42_capacity(cm->battery.cycle_count);
 }
 
@@ -487,7 +489,8 @@ void *qb_gauge_monitor(void *arg)
                 qb_mos_off(cm, 0);
                 qb_mos_off(cm, 1);
             }
-            if (!adapter_online && cm->buck.vbat_adc_mv < 3400)
+            if (qb_low_voltage_danger(cm, adapter_online,
+                                      cm->buck.vbat_adc_mv))
                 danger = true;
             else if (cm->battery.temp_decic <= -100 ||
                      cm->battery.temp_decic >= 580)
