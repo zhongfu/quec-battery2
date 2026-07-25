@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,7 +67,8 @@ int qb_read_int(const char *dir, const char *attr, int *value)
     parsed = strtol(buf, &end, 10);
     while (*end == ' ' || *end == '\r' || *end == '\n')
         end++;
-    if (errno || *end != '\0') {
+    if (errno || end == buf || *end != '\0' ||
+        parsed < INT_MIN || parsed > INT_MAX) {
         QBLOG(0x21b, "Conversion failed, non-numeric data found: %s\n", end);
         return -1;
     }
@@ -96,22 +98,4 @@ int qb_write_int(const char *dir, const char *attr, int value)
     char buf[32];
     snprintf(buf, sizeof(buf), "%d", value);
     return qb_write_str(dir, attr, buf);
-}
-
-int qb_read_int_file(const char *path)
-{
-    FILE *fp;
-    int value = -1;
-
-    fp = fopen(path, "r");
-    if (!fp) {
-        perror("Error opening file");
-        return -1;
-    }
-    if (fscanf(fp, "%d", &value) != 1) {
-        perror("Error reading number from file");
-        value = -1;
-    }
-    fclose(fp);
-    return value;
 }

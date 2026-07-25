@@ -6,8 +6,10 @@
 
 static bool qb_pump_allowed(struct qb_manager *cm, struct qb_pd_port *port, int vbat_mv)
 {
-    return cm->charge_current_ma > 0 && qb_pps_enabled(cm) &&
-           vbat_mv > 3400 && vbat_mv < cm->pd_full_mv &&
+    return cm->pump.telemetry_valid && port->telemetry_valid &&
+           cm->battery.telemetry_valid && cm->charge_current_ma > 0 &&
+           qb_pps_enabled(cm) && vbat_mv > 3400 &&
+           vbat_mv < cm->pd_full_mv &&
            port->supports_pps &&
            port->pps_min_voltage_mv <= cm->max_pd_vbus_mv &&
            cm->temp_status >= QB_TEMP_NORMAL &&

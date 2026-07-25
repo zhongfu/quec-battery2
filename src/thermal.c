@@ -461,10 +461,19 @@ void *qb_gauge_monitor(void *arg)
         bool adapter_online;
         bool danger = false;
         bool gauge_reset;
+        int battery_info_status;
         time_t now;
 
         qb_get_battery_online(cm);
-        qb_get_battery_info(cm);
+        battery_info_status = qb_get_battery_info(cm);
+        if (cm->battery.present == 1 && battery_info_status < 0) {
+            cm->charge_current_ma = 0;
+            cm->temp_status = QB_TEMP_OVERHEAT;
+            QBLOG(0x9ed, "battery telemetry unavailable failures:%u\n",
+                  cm->battery.telemetry_failures);
+            sleep(3);
+            continue;
+        }
         if (!cm->battery.present)
             cm->battery.temp_decic = -5;
         qb_update_charge_limits(cm);

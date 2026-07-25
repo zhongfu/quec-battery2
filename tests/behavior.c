@@ -186,6 +186,7 @@ static void test_pd_inventory(void)
     assert(cm.pda.pps_current_ma == 3000 && cm.pda.max_voltage_mv == 12000);
     assert(cm.pda.attached && cm.pda.cc_pin == QB_CC1);
     assert(!cm.pda.data_role_dfp && cm.pda.power_role == QB_ROLE_SINK);
+    assert(cm.pda.telemetry_valid && cm.pda.telemetry_failures == 0);
 
     write_test_file(directory, "cc_pin", "CC2\n");
     write_test_file(directory, "data_role", "DFP\n");
@@ -193,6 +194,17 @@ static void test_pd_inventory(void)
     assert(qb_get_port_info(&cm.pda, true) == 0);
     assert(cm.pda.attached && cm.pda.cc_pin == QB_CC2);
     assert(cm.pda.data_role_dfp && cm.pda.power_role == QB_ROLE_SOURCE);
+    assert(cm.pda.telemetry_valid && cm.pda.telemetry_failures == 0);
+
+    snprintf(path, sizeof(path), "%spwr_role", directory);
+    assert(unlink(path) == 0);
+    assert(qb_get_port_info(&cm.pda, false) == -1);
+    assert(!cm.pda.telemetry_valid);
+    assert(cm.pda.power_role == QB_ROLE_UNKNOWN);
+    assert(cm.pda.telemetry_failures == 1);
+    write_test_file(directory, "pwr_role", "Sink\n");
+    assert(qb_get_port_info(&cm.pda, false) == 0);
+    assert(cm.pda.telemetry_valid && cm.pda.telemetry_failures == 0);
 
     static const char *files[] = {"pdo_set", "cc_pin", "data_role", "pwr_role"};
     for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
@@ -226,6 +238,32 @@ static void test_pdo_request_safety(void)
     assert(!qb_pps_voltage_matches(9000, 8299));
     assert(!qb_pps_voltage_matches(9000, 9701));
     assert(!qb_pps_voltage_matches(0, 0));
+}
+
+static void test_sysfs_integer_validation(void)
+{
+    char directory[128];
+    char path[160];
+    int value = 77;
+
+    snprintf(directory, sizeof(directory), "/tmp/qb-read-test-%ld/",
+             (long)getpid());
+    snprintf(path, sizeof(path), "%.*s", (int)strlen(directory) - 1, directory);
+    assert(mkdir(path, 0700) == 0);
+
+    write_test_file(directory, "value", "123\n");
+    assert(qb_read_int(directory, "value", &value) == 0 && value == 123);
+    write_test_file(directory, "value", "");
+    assert(qb_read_int(directory, "value", &value) == -1 && value == 123);
+    write_test_file(directory, "value", "999999999999999999999999\n");
+    assert(qb_read_int(directory, "value", &value) == -1 && value == 123);
+    write_test_file(directory, "value", "123garbage\n");
+    assert(qb_read_int(directory, "value", &value) == -1 && value == 123);
+
+    snprintf(path, sizeof(path), "%svalue", directory);
+    assert(unlink(path) == 0);
+    snprintf(path, sizeof(path), "%.*s", (int)strlen(directory) - 1, directory);
+    assert(rmdir(path) == 0);
 }
 
 static void test_event_queue(void)
@@ -537,6 +575,7 @@ int main(void)
     test_event_queue();
     test_config_loader();
     test_config_bounds_and_helpers();
+    test_sysfs_integer_validation();
     test_initial_temperature_policy();
     test_temperature_policy_matrix();
     test_pps_policy_matrix();

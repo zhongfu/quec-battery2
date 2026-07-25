@@ -8,67 +8,120 @@
 
 int qb_get_sgm41542_info(struct qb_manager *cm)
 {
+    struct qb_sgm41542 next = cm->buck;
     struct stat st;
-    char pair[32] = {0};
-    char *p;
-    int rc;
+    char pair[64];
+    int debug_value;
 
-    qb_read_int(QB_SGM41542_PATH, "charge_en", &cm->buck.charge_en);
-    qb_read_int(QB_SGM41542_PATH, "ichrg_curr", &cm->buck.ichrg_curr_ua);
-    qb_read_int(QB_SGM41542_PATH, "vreg", &cm->buck.vreg_uv);
-    qb_read_int(QB_SGM41542_PATH, "vbus_adc", &cm->buck.vbus_adc_mv);
-    qb_read_int(QB_SGM41542_PATH, "ibus_adc", &cm->buck.ibus_adc_ma);
-    qb_read_int(QB_SGM41542_PATH, "vbat_adc", &cm->buck.vbat_adc_mv);
-    if (!stat("/var/dbg_vbat", &st))
-        cm->buck.vbat_adc_mv = qb_read_int_file("/var/dbg_vbat");
-    qb_read_int(QB_SGM41542_PATH, "ibat_adc", &cm->buck.ibat_adc_ma);
-    if (!stat("/var/dbg_ibat", &st))
-        cm->buck.ibat_adc_ma = qb_read_int_file("/var/dbg_ibat");
+    if (qb_read_int(QB_SGM41542_PATH, "charge_en", &next.charge_en) < 0 ||
+        qb_read_int(QB_SGM41542_PATH, "ichrg_curr", &next.ichrg_curr_ua) < 0 ||
+        qb_read_int(QB_SGM41542_PATH, "vreg", &next.vreg_uv) < 0 ||
+        qb_read_int(QB_SGM41542_PATH, "vbus_adc", &next.vbus_adc_mv) < 0 ||
+        qb_read_int(QB_SGM41542_PATH, "ibus_adc", &next.ibus_adc_ma) < 0 ||
+        qb_read_int(QB_SGM41542_PATH, "vbat_adc", &next.vbat_adc_mv) < 0 ||
+        qb_read_int(QB_SGM41542_PATH, "ibat_adc", &next.ibat_adc_ma) < 0 ||
+        qb_read_str(QB_SGM41542_PATH, "vbus_ovp_vindpm",
+                    pair, sizeof(pair)) < 0 ||
+        sscanf(pair, "vbus_ovp_uv:%d; vindpm_uv: %d",
+               &next.vbus_ovp_uv, &next.vindpm_uv) != 2)
+        goto invalid;
 
-    rc = qb_read_str(QB_SGM41542_PATH, "vbus_ovp_vindpm", pair, sizeof(pair));
-    if ((p = strstr(pair, "vbus_ovp_uv:")))
-        cm->buck.vbus_ovp_uv = atoi(p + 12);
-    if ((p = strstr(pair, "vindpm_uv:")))
-        cm->buck.vindpm_uv = atoi(p + 10);
-    return rc;
+    if (!stat("/var/dbg_vbat", &st)) {
+        if (qb_read_int("/var/", "dbg_vbat", &debug_value) < 0)
+            goto invalid;
+        next.vbat_adc_mv = debug_value;
+    }
+    if (!stat("/var/dbg_ibat", &st)) {
+        if (qb_read_int("/var/", "dbg_ibat", &debug_value) < 0)
+            goto invalid;
+        next.ibat_adc_ma = debug_value;
+    }
+
+    next.telemetry_valid = true;
+    next.telemetry_failures = 0;
+    cm->buck = next;
+    return 0;
+
+invalid:
+    cm->buck.telemetry_valid = false;
+    cm->buck.telemetry_failures++;
+    return -1;
 }
 
 int qb_get_sgm41600_info(struct qb_manager *cm)
 {
+    struct qb_sgm41600 next = cm->pump;
     struct stat st;
-    int rc;
+    int debug_value;
 
-    qb_read_int(QB_SGM41600_PATH, "charge_en", &cm->pump.charge_en);
-    qb_read_int(QB_SGM41600_PATH, "vbus_ocp_ua", &cm->pump.vbus_ocp_ua);
-    qb_read_int(QB_SGM41600_PATH, "vbus_ovp_uv", &cm->pump.vbus_ovp_uv);
-    qb_read_int(QB_SGM41600_PATH, "bat_ovp_uv", &cm->pump.bat_ovp_uv);
-    qb_read_int(QB_SGM41600_PATH, "bat_ocp_ua", &cm->pump.bat_ocp_ua);
-    qb_read_int(QB_SGM41600_PATH, "vbus_adc", &cm->pump.vbus_adc_mv);
-    qb_read_int(QB_SGM41600_PATH, "ibus_adc", &cm->pump.ibus_adc_ma);
-    qb_read_int(QB_SGM41600_PATH, "vbat_adc", &cm->pump.vbat_adc_mv);
-    if (!stat("/var/dbg_vbat", &st))
-        cm->pump.vbat_adc_mv = qb_read_int_file("/var/dbg_vbat");
-    rc = qb_read_int(QB_SGM41600_PATH, "ibat_adc", &cm->pump.ibat_adc_ma);
-    if (!stat("/var/dbg_ibat", &st))
-        cm->pump.ibat_adc_ma = qb_read_int_file("/var/dbg_ibat");
-    return rc;
+    if (qb_read_int(QB_SGM41600_PATH, "charge_en", &next.charge_en) < 0 ||
+        qb_read_int(QB_SGM41600_PATH, "vbus_ocp_ua", &next.vbus_ocp_ua) < 0 ||
+        qb_read_int(QB_SGM41600_PATH, "vbus_ovp_uv", &next.vbus_ovp_uv) < 0 ||
+        qb_read_int(QB_SGM41600_PATH, "bat_ovp_uv", &next.bat_ovp_uv) < 0 ||
+        qb_read_int(QB_SGM41600_PATH, "bat_ocp_ua", &next.bat_ocp_ua) < 0 ||
+        qb_read_int(QB_SGM41600_PATH, "vbus_adc", &next.vbus_adc_mv) < 0 ||
+        qb_read_int(QB_SGM41600_PATH, "ibus_adc", &next.ibus_adc_ma) < 0 ||
+        qb_read_int(QB_SGM41600_PATH, "vbat_adc", &next.vbat_adc_mv) < 0 ||
+        qb_read_int(QB_SGM41600_PATH, "ibat_adc", &next.ibat_adc_ma) < 0)
+        goto invalid;
+
+    if (!stat("/var/dbg_vbat", &st)) {
+        if (qb_read_int("/var/", "dbg_vbat", &debug_value) < 0)
+            goto invalid;
+        next.vbat_adc_mv = debug_value;
+    }
+    if (!stat("/var/dbg_ibat", &st)) {
+        if (qb_read_int("/var/", "dbg_ibat", &debug_value) < 0)
+            goto invalid;
+        next.ibat_adc_ma = debug_value;
+    }
+
+    next.telemetry_valid = true;
+    next.telemetry_failures = 0;
+    cm->pump = next;
+    return 0;
+
+invalid:
+    cm->pump.telemetry_valid = false;
+    cm->pump.telemetry_failures++;
+    return -1;
 }
 
 int qb_get_battery_info(struct qb_manager *cm)
 {
+    struct qb_battery next = cm->battery;
     struct stat st;
+    int debug_value;
 
-    qb_read_int(QB_BATTERY_PATH, "capacity", &cm->battery.capacity);
-    qb_read_int(QB_BATTERY_PATH, "cycle_count", &cm->battery.cycle_count);
-    qb_read_int(QB_BATTERY_PATH, "voltage_now", &cm->battery.voltage_mv);
-    if (!stat("/var/dbg_vbat", &st))
-        cm->battery.voltage_mv = qb_read_int_file("/var/dbg_vbat");
-    qb_read_int(QB_BATTERY_PATH, "current_now", &cm->battery.current_ma);
-    qb_read_int(QB_BATTERY_PATH, "temp", &cm->battery.temp_decic);
-    if (!stat("/var/dbg_temp", &st))
-        cm->battery.temp_decic = qb_read_int_file("/var/dbg_temp");
-    return qb_read_str(QB_BATTERY_PATH, "health", cm->battery.health,
-                       sizeof(cm->battery.health));
+    if (qb_read_int(QB_BATTERY_PATH, "capacity", &next.capacity) < 0 ||
+        qb_read_int(QB_BATTERY_PATH, "cycle_count", &next.cycle_count) < 0 ||
+        qb_read_int(QB_BATTERY_PATH, "voltage_now", &next.voltage_mv) < 0 ||
+        qb_read_int(QB_BATTERY_PATH, "current_now", &next.current_ma) < 0 ||
+        qb_read_int(QB_BATTERY_PATH, "temp", &next.temp_decic) < 0 ||
+        qb_read_str(QB_BATTERY_PATH, "health",
+                    next.health, sizeof(next.health)) < 0)
+        goto invalid;
+
+    if (!stat("/var/dbg_vbat", &st)) {
+        if (qb_read_int("/var/", "dbg_vbat", &debug_value) < 0)
+            goto invalid;
+        next.voltage_mv = debug_value;
+    }
+    if (!stat("/var/dbg_temp", &st)) {
+        if (qb_read_int("/var/", "dbg_temp", &debug_value) < 0)
+            goto invalid;
+        next.temp_decic = debug_value;
+    }
+
+    next.telemetry_valid = true;
+    next.telemetry_failures = 0;
+    cm->battery = next;
+    return 0;
+
+invalid:
+    cm->battery.telemetry_valid = false;
+    cm->battery.telemetry_failures++;
+    return -1;
 }
 
 void qb_get_battery_online(struct qb_manager *cm)

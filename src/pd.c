@@ -173,28 +173,57 @@ int qb_get_pdo_info(struct qb_pd_port *port)
 
 int qb_get_port_info(struct qb_pd_port *port, bool read_connection)
 {
-    char buf[32] = {0};
-
+    char cc[32];
+    char data_role[32];
+    char power_role[32];
     int status = qb_get_pdo_info(port);
+
+    port->telemetry_valid = false;
     if (read_connection) {
-        qb_read_str(port->path, "cc_pin", buf, sizeof(buf));
-        if (!strcmp(buf, "CC1"))
-            port->cc_pin = QB_CC1;
-        else if (!strcmp(buf, "CC2"))
-            port->cc_pin = QB_CC2;
-        else
+        if (qb_read_str(port->path, "cc_pin", cc, sizeof(cc)) < 0) {
             port->cc_pin = QB_CC_NONE;
-        port->attached = port->cc_pin != QB_CC_NONE;
+            port->attached = false;
+            status = -1;
+        } else {
+            if (!strcmp(cc, "CC1"))
+                port->cc_pin = QB_CC1;
+            else if (!strcmp(cc, "CC2"))
+                port->cc_pin = QB_CC2;
+            else
+                port->cc_pin = QB_CC_NONE;
+            port->attached = port->cc_pin != QB_CC_NONE;
+        }
     }
 
-    qb_read_str(port->path, "data_role", buf, sizeof(buf));
-    port->data_role_dfp = !strcmp(buf, "DFP");
+    if (qb_read_str(port->path, "data_role",
+                    data_role, sizeof(data_role)) < 0) {
+        port->data_role_dfp = false;
+    } else {
+        port->data_role_dfp = !strcmp(data_role, "DFP");
+    }
     if (port->manager && port == &port->manager->pda)
         port->manager->otg_mode = port->data_role_dfp;
 
-    qb_read_str(port->path, "pwr_role", buf, sizeof(buf));
-    port->power_role = !strcmp(buf, "Source") ? QB_ROLE_SOURCE : QB_ROLE_SINK;
-    return status == 0 ? 0 : -1;
+    if (qb_read_str(port->path, "pwr_role",
+                    power_role, sizeof(power_role)) < 0) {
+        port->power_role = QB_ROLE_UNKNOWN;
+        status = -1;
+    } else if (!strcmp(power_role, "Source")) {
+        port->power_role = QB_ROLE_SOURCE;
+    } else if (!strcmp(power_role, "Sink")) {
+        port->power_role = QB_ROLE_SINK;
+    } else {
+        port->power_role = QB_ROLE_UNKNOWN;
+        status = -1;
+    }
+
+    if (status == 0) {
+        port->telemetry_valid = true;
+        port->telemetry_failures = 0;
+        return 0;
+    }
+    port->telemetry_failures++;
+    return -1;
 }
 
 bool qb_request_pdo(struct qb_pd_port *port, int voltage_mv, int current_ma)

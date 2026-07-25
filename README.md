@@ -125,6 +125,15 @@ the active policy current. Repeated VBUS droop can reduce charging to the
 device-supported zero-current setting, but can no longer generate negative
 `ichrg_curr` writes.
 
+### Telemetry validity
+
+Charger, charge-pump, and gauge samples are assembled as complete snapshots;
+failed or malformed reads no longer partially update live policy state. A Type-C
+power-role read failure produces `UNKNOWN`, never an assumed sink. Buck and pump
+monitors require fresh valid charger, battery, and port telemetry and leave the
+active charging path on a failed refresh. Consecutive-failure counters reset
+only after a complete sample succeeds.
+
 ## Behavior reference
 
 See [`docs/original-daemon.md`](docs/original-daemon.md) before changing charging

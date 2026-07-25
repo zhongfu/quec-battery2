@@ -105,6 +105,8 @@ struct qb_pd_port {
 
     bool attached;
     bool working;
+    bool telemetry_valid;
+    unsigned telemetry_failures;
 };
 
 struct qb_sgm41542 {
@@ -119,6 +121,8 @@ struct qb_sgm41542 {
     int ibat_adc_ma;
     bool working;
     int charge_status;
+    bool telemetry_valid;
+    unsigned telemetry_failures;
 };
 
 struct qb_sgm41600 {
@@ -133,6 +137,8 @@ struct qb_sgm41600 {
     int ibat_adc_ma;
     bool working;
     int charge_status;
+    bool telemetry_valid;
+    unsigned telemetry_failures;
 };
 
 struct qb_battery {
@@ -143,6 +149,8 @@ struct qb_battery {
     int temp_decic;
     int cycle_count;
     char health[12];
+    bool telemetry_valid;
+    unsigned telemetry_failures;
 };
 
 struct qb_event_queue {
@@ -215,7 +223,6 @@ int qb_read_int(const char *dir, const char *attr, int *value);
 int qb_read_str(const char *dir, const char *attr, char *buf, size_t size);
 int qb_write_str(const char *dir, const char *attr, const char *value);
 int qb_write_int(const char *dir, const char *attr, int value);
-int qb_read_int_file(const char *path);
 
 bool qb_queue_empty(struct qb_manager *cm);
 bool qb_queue_full(struct qb_manager *cm);
