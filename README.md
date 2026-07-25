@@ -90,22 +90,56 @@ This fork makes the stock charging settings and the optional voltage limit in
 | `min_shutdown_mv` | 3400 mV | 3400–3800 mV | Sets the no-adapter low-voltage shutdown threshold |
 | `max_pd_vbus_mv` | 9800 mV | 0–9800 mV | Caps every PPS voltage request; values below 6600 mV disable PPS |
 | `pd_full_mv` | 4200 mV | 3401–4200 mV | Sets PPS eligibility and the pump-to-buck transition threshold |
-| `charge_limit_mv` | 0 (disabled) | 3800–4200 mV | Applies a non-terminating CV ceiling to buck charging and coordinated SGM41600/PPS voltage regulation |
-| `charge_limit_percent` | 0 (disabled) | 0–100% | Holds battery charge current at zero after three samples at the limit; resumes after three samples at least three percentage points lower |
+| `charge_limit_mv` | 0 (disabled) | 0, or 3800–4200 mV | Applies a non-terminating CV ceiling to buck charging and coordinated SGM41600/PPS voltage regulation |
+| `charge_limit_percent` | 0 (disabled) | 0 (disabled), or 1–100% | Holds battery charge current at zero after three samples at the limit; resumes after three samples at least three percentage points lower |
 
-Values outside the ranges are clamped toward the safe limit. A malformed
+Configuration values are base-10 integers in the units shown above. A malformed
 integer is ignored, leaving the prior/default value in effect. Detailed logging
 reports both the raw and effective value when `/tmp/quec_battery_log` exists.
+The exact normalization rules for the two optional charge limits are:
+
+| Raw value | Effective `charge_limit_mv` |
+| ---: | ---: |
+| less than 0 | 0 (disabled) |
+| 0 | 0 (disabled) |
+| 1–3799 mV | 3800 mV |
+| 3800–4200 mV | unchanged |
+| greater than 4200 mV | 4200 mV |
+
+| Raw value | Effective `charge_limit_percent` |
+| ---: | ---: |
+| less than 0 | 0 (disabled) |
+| 0 | 0 (disabled) |
+| 1–100% | unchanged |
+| greater than 100% | 100% |
 
 These bounds only allow configuration to tighten the recovered stock policy:
 current and PPS voltage cannot exceed the stock maxima, shutdown cannot occur
 below the stock floor, and PPS cannot remain active above the stock full
 threshold.
 
+The 3800 mV active floor comes from the SGM41600 charge-pump regulation path.
+Its minimum `BAT_OVP` threshold is 4000 mV, and `VBAT_REG` can regulate at most
+200 mV below `BAT_OVP`; the lowest representable pump target is therefore
+3800 mV. At that target the daemon programs `BAT_OVP` to 4000 mV and
+`VBAT_REG` to 200 mV below it. Pump targets are rounded downward to 25 mV
+steps. The SGM41542S buck charger itself supports lower `VREG` values, down to
+3500 mV in 10 mV steps, but this daemon does not interpret a sub-3800 mV
+setting as a request for buck-only charging. Any positive value below 3800 mV
+is clamped to 3800 mV instead.
+
+With an active voltage limit, mode selection uses the effective target: if
+battery voltage is already at or above it, the charge pump is ineligible and
+the buck path is selected. If PPS charging began below the target, reaching
+the target does not by itself force a transition to buck. The SGM41600 remains
+in regulated PPS operation and the daemon lowers the PPS request in 100 mV
+steps. It still falls back to 5 V buck charging for the normal safety and
+capability failures described below.
+
 For example, a 4.00 V ceiling combined with an 80% capacity limit:
 
 ```uci
-config battery 'settings'
+config quec_battery_configs 'settings'
 	option charge_limit_mv '4000'
 	option charge_limit_percent '80'
 ```
