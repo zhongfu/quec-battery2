@@ -218,7 +218,8 @@ int qb_program_buck_voltage_limit(struct qb_manager *cm)
 {
     int target_mv = cm->full_voltage_mv;
 
-    if (target_mv == cm->programmed_buck_voltage_mv)
+    if (target_mv == cm->programmed_buck_voltage_mv &&
+        cm->buck.vreg_uv == target_mv * 1000)
         return 0;
     if ((cm->charge_limit_mv &&
          qb_update_register(QB_SGM41542_PATH, 0x05, 0x80, 0x00) < 0) ||

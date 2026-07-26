@@ -16,9 +16,9 @@ static bool qb_pump_ready_for(struct qb_manager *cm, struct qb_pd_port *port)
  
 static bool qb_pump_running_for(struct qb_manager *cm, struct qb_pd_port *port)
 {
-    return cm->pump.charge_status == 1 && cm->pump.telemetry_valid &&
-           cm->battery.telemetry_valid && port->working &&
-           port->telemetry_valid && !cm->pump_error &&
+    return cm->pump.charge_status == 1 && cm->pump.charge_en == 2 &&
+           cm->pump.telemetry_valid && cm->battery.telemetry_valid &&
+           port->working && port->telemetry_valid && !cm->pump_error &&
            qb_battery_present(cm) && port->power_role == QB_ROLE_SINK;
 }
 
@@ -41,8 +41,8 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
         return;
     }
 
-    cm->pps_voltage_mv = qb_limit_pps_voltage(
-        cm, cm->pump.vbat_adc_mv * 220 / 100);
+    cm->pps_voltage_mv =
+        qb_pump_start_voltage_mv(cm, cm->pump.vbat_adc_mv);
     initial_current = (cm->charge_current_ma / 200) * 100;
     if (!qb_request_pdo(port, cm->pps_voltage_mv, initial_current)) {
         qb_pump_fallback_to_buck(cm, port, index);
@@ -56,11 +56,17 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
         qb_read_int(QB_SGM41600_PATH, "vbus_adc", &measured_vbus_mv) < 0 ||
         !qb_pps_voltage_matches(cm->pps_voltage_mv, measured_vbus_mv) ||
         qb_set_sgm41600(cm, "charge_en", "2") < 0) {
+        QBLOG(0x59f,
+              "pump start rejected: charge_en:%d requested:%d mV measured:%d mV",
+              cm->pump.charge_en, cm->pps_voltage_mv, measured_vbus_mv);
         qb_pump_fallback_to_buck(cm, port, index);
         return;
     }
 
     if (!qb_pump_running_for(cm, port)) {
+        QBLOG(0x5a1,
+              "pump did not enter divider mode: charge_en:%d requested:%d mV",
+              cm->pump.charge_en, cm->pps_voltage_mv);
         qb_pump_fallback_to_buck(cm, port, index);
         return;
     }
@@ -71,6 +77,12 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
         if (cm->charge_mode_switching || !qb_battery_present(cm))
             return;
         if (qb_get_sgm41600_info(cm) < 0) {
+            qb_pump_fallback_to_buck(cm, port, index);
+            return;
+        }
+        if (cm->pump.charge_en != 2) {
+            QBLOG(0x5a7, "pump stopped unexpectedly: charge_en:%d",
+                  cm->pump.charge_en);
             qb_pump_fallback_to_buck(cm, port, index);
             return;
         }
