@@ -128,13 +128,23 @@ steps. The SGM41542S buck charger itself supports lower `VREG` values, down to
 setting as a request for buck-only charging. Any positive value below 3800 mV
 is clamped to 3800 mV instead.
 
-With an active voltage limit, mode selection uses the effective target: if
-battery voltage is already at or above it, the charge pump is ineligible and
-the buck path is selected. If PPS charging began below the target, reaching
-the target does not by itself force a transition to buck. The SGM41600 remains
-in regulated PPS operation and the daemon lowers the PPS request in 100 mV
-steps. It still falls back to 5 V buck charging for the normal safety and
-capability failures described below.
+With an active voltage limit, mode selection requires the battery to be at
+least 100 mV below the effective target before the charge pump is eligible.
+Inside that final 100 mV window the buck path is selected directly. This avoids
+starting the SGM41600 in its `VBAT_REG` region, where the rapidly falling input
+current can trigger `IBUS_UCP` and reset divider mode.
+
+When PPS charging begins below that window, the daemon starts at 2.1 times the
+measured battery voltage. This lies inside the SGM41600's default valid
+divider-mode startup window of 2.08–2.2 times `VOUT`, while avoiding the
+immediate current step caused by the former 2.2-times request. After divider
+mode is confirmed, the daemon raises the request in 100 mV steps as needed,
+capped at 2.2 times the effective battery-voltage target. Reaching the target
+does not by itself force a transition to buck: the SGM41600 remains in
+regulated PPS operation and the request is reduced as needed. If the SGM41600
+does not enter or remain in voltage-divider mode, the daemon immediately
+disables it, returns PD to 5 V, and selects buck charging. Normal safety and
+capability failures use the same fallback.
 
 For example, a 4.00 V ceiling combined with an 80% capacity limit:
 
@@ -145,12 +155,15 @@ config quec_battery_configs 'settings'
 ```
 
 When enabled, the daemon disables the SGM41542S termination bit and programs
-its `vreg` to the active minimum of the configured, thermal, and cycle-aging
-limits. For PPS charging it programs SGM41600 `BAT_OVP` and `VBAT_REG` with a
-200 mV regulation margin, disables the 650 ms regulation timeout, and lowers
-the PPS request when battery voltage reaches the same target. SGM41600
-regulation is quantized downward to its 25 mV protection steps; the SGM41542S
-uses its 10 mV CV steps.
+its constant-charge voltage through the readable vendor `vreg` attribute, using
+the active minimum of the configured, thermal, and cycle-aging limits. The
+standard power-supply `constant_charge_voltage` attribute writes the same
+hardware register on this target, but its read method always reports zero.
+The daemon therefore verifies the setting through `vreg` and reapplies it if
+the charger register drifts or resets. For PPS charging it programs SGM41600
+`BAT_OVP` and `VBAT_REG` with a 200 mV regulation margin and disables the
+650 ms regulation timeout. SGM41600 regulation is quantized downward to its
+25 mV protection steps; the SGM41542S uses its 10 mV CV steps.
 
 The capacity limit is evaluated only from complete, range-checked gauge
 snapshots. Three consecutive samples are required both to enter the hold and

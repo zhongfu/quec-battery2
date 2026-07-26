@@ -21,6 +21,9 @@
 #define QB_MAX_CHARGE_LIMIT_MV 4200
 #define QB_CAPACITY_LIMIT_HYSTERESIS 3
 #define QB_CAPACITY_LIMIT_SAMPLES 3
+#define QB_PUMP_START_RATIO_PERCENT 210
+#define QB_PUMP_LIMIT_RATIO_PERCENT 220
+#define QB_PUMP_LIMIT_ENTRY_MARGIN_MV 100
 
 #define QB_LOG_FLAG "/tmp/quec_battery_log"
 #define QB_UCI_CONFIG "/etc/config/qlbattery"
@@ -285,6 +288,8 @@ void qb_no_charge(struct qb_manager *cm);
 void qb_pump_pps_control(struct qb_manager *cm);
 void qb_fixed_charge_control(struct qb_manager *cm);
 int qb_pump_target_mv(const struct qb_manager *cm);
+int qb_pump_start_voltage_mv(const struct qb_manager *cm, int battery_mv);
+bool qb_pump_entry_voltage_ok(const struct qb_manager *cm, int battery_mv);
 int qb_select_qc_max_voltage(struct qb_manager *cm);
 void qb_mode1_charge(struct qb_manager *cm);
 void qb_mode2_charge(struct qb_manager *cm);

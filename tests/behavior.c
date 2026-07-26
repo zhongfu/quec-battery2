@@ -567,10 +567,10 @@ static void test_charge_voltage_limit(void)
     cm.pump.ibat_adc_ma = 1000;
     cm.pump.ibus_adc_ma = 1;
     qb_pump_pps_control(&cm);
-    assert(cm.pps_voltage_mv == 8900);
+    assert(cm.pps_voltage_mv == 8800);
     cm.pump.vbat_adc_mv = 3950;
     qb_pump_pps_control(&cm);
-    assert(cm.pps_voltage_mv == 9000);
+    assert(cm.pps_voltage_mv == 8800);
 
     snprintf(directory, sizeof(directory), "/tmp/qb-register-test-%ld/",
              (long)getpid());
@@ -704,6 +704,35 @@ static void test_pps_policy_matrix(void)
     }
 }
 
+static void test_bounded_pps_ceiling(void)
+{
+    struct qb_manager cm;
+
+    memset(&cm, 0, sizeof(cm));
+    cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
+    cm.charge_limit_mv = 4100;
+    cm.full_voltage_mv = 4100;
+    cm.charge_current_ma = 5300;
+    cm.pump.vbat_adc_mv = 4022;
+    cm.pump.ibat_adc_ma = 0;
+    cm.pump.ibus_adc_ma = 1;
+    assert(qb_pump_start_voltage_mv(&cm, 4022) == 8446);
+    assert(qb_pump_entry_voltage_ok(&cm, 3999));
+    assert(!qb_pump_entry_voltage_ok(&cm, 4000));
+    assert(!qb_pump_entry_voltage_ok(&cm, 4060));
+
+    cm.pps_voltage_mv = 9369;
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 9020);
+
+    cm.pps_voltage_mv = 8920;
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 9020);
+
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 9020);
+}
+
 static void test_fixed_charge_ramp(void)
 {
     struct qb_manager cm;
@@ -794,6 +823,7 @@ int main(void)
     test_initial_temperature_policy();
     test_temperature_policy_matrix();
     test_pps_policy_matrix();
+    test_bounded_pps_ceiling();
     test_fixed_charge_ramp();
     test_charge_state_flags();
     puts("behavior regression suite passed");

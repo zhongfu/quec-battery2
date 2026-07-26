@@ -10,7 +10,7 @@ static bool qb_pump_allowed(struct qb_manager *cm, struct qb_pd_port *port, int 
            port->telemetry_valid && cm->battery.telemetry_valid &&
            cm->charge_current_ma > 0 &&
            qb_pps_enabled(cm) && vbat_mv > 3400 &&
-           vbat_mv < qb_pump_target_mv(cm) &&
+           qb_pump_entry_voltage_ok(cm, vbat_mv) &&
            port->supports_pps &&
            port->pps_min_voltage_mv <= cm->max_pd_vbus_mv &&
            cm->temp_status >= QB_TEMP_NORMAL &&
@@ -27,6 +27,20 @@ void qb_no_charge(struct qb_manager *cm)
     cm->pdb.working = false;
 }
 
+bool qb_pump_entry_voltage_ok(const struct qb_manager *cm, int battery_mv)
+{
+    int margin_mv =
+        cm->charge_limit_mv ? QB_PUMP_LIMIT_ENTRY_MARGIN_MV : 0;
+
+    return battery_mv < qb_pump_target_mv(cm) - margin_mv;
+}
+
+int qb_pump_start_voltage_mv(const struct qb_manager *cm, int battery_mv)
+{
+    return qb_limit_pps_voltage(
+        cm, battery_mv * QB_PUMP_START_RATIO_PERCENT / 100);
+}
+
 int qb_pump_target_mv(const struct qb_manager *cm)
 {
     return cm->charge_limit_mv ? cm->full_voltage_mv : cm->pd_full_mv;
@@ -37,12 +51,19 @@ void qb_pump_pps_control(struct qb_manager *cm)
     int vbat = cm->pump.vbat_adc_mv;
     int target_mv = qb_pump_target_mv(cm);
     int next;
+    int bounded_ceiling_mv = 0;
+
+    if (cm->charge_limit_mv)
+        bounded_ceiling_mv =
+            target_mv * QB_PUMP_LIMIT_RATIO_PERCENT / 100;
 
     if ((cm->charge_limit_mv ? vbat < target_mv : vbat <= target_mv) &&
         cm->pump.ibat_adc_ma < cm->charge_current_ma - 300) {
         next = cm->pps_voltage_mv + 100;
         if (next >= vbat * 235 / 100)
             next = cm->pps_voltage_mv;
+        if (bounded_ceiling_mv && next > bounded_ceiling_mv)
+            next = bounded_ceiling_mv;
         next = qb_limit_pps_voltage(cm, next);
         cm->pps_voltage_mv = next;
     }
@@ -56,6 +77,10 @@ void qb_pump_pps_control(struct qb_manager *cm)
         next = qb_limit_pps_voltage(cm, next);
         cm->pps_voltage_mv = next;
     }
+    if (bounded_ceiling_mv && cm->pps_voltage_mv > bounded_ceiling_mv)
+        cm->pps_voltage_mv =
+            qb_limit_pps_voltage(cm, bounded_ceiling_mv);
+
 
     if (!cm->pump.ibus_adc_ma) {
         cm->pump_error_count++;
