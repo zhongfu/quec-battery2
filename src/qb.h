@@ -288,6 +288,10 @@ void qb_enable_buck_cfg(struct qb_manager *cm, struct qb_pd_port *port);
 void qb_disable_buck_cfg(struct qb_manager *cm, struct qb_pd_port *port);
 void qb_enable_pump_cfg(struct qb_manager *cm, struct qb_pd_port *port);
 void qb_disable_pump_cfg(struct qb_manager *cm, struct qb_pd_port *port);
+bool qb_select_buck_fixed_pdo(const struct qb_pd_port *port,
+                              int *voltage_mv, int *current_ma);
+bool qb_enable_buck_handoff(struct qb_manager *cm,
+                            struct qb_pd_port *port);
 void qb_enable_buck(struct qb_manager *cm, struct qb_pd_port *port);
 void qb_set_pwm(bool enabled);
 

@@ -377,17 +377,81 @@ void qb_disable_pump_cfg(struct qb_manager *cm, struct qb_pd_port *port)
     port->working = false;
 }
 
-void qb_enable_buck(struct qb_manager *cm, struct qb_pd_port *port)
+bool qb_select_buck_fixed_pdo(const struct qb_pd_port *port,
+                              int *voltage_mv, int *current_ma)
 {
-    int voltage_mv = 5000;
+    if (!port || !voltage_mv || !current_ma)
+        return false;
+    if (port->fixed_12v && port->fixed_12v_current_ma > 0) {
+        *voltage_mv = 12000;
+        *current_ma = port->fixed_12v_current_ma;
+        return true;
+    }
+    if (port->fixed_9v && port->fixed_9v_current_ma > 0) {
+        *voltage_mv = 9000;
+        *current_ma = port->fixed_9v_current_ma;
+        return true;
+    }
+    if (port->fixed_5v && port->fixed_5v_current_ma > 0) {
+        *voltage_mv = 5000;
+        *current_ma = port->fixed_5v_current_ma;
+        return true;
+    }
+    return false;
+}
 
-    cm->buck_charge_current_ua = 300000;
+static void qb_route_buck_input(struct qb_manager *cm,
+                                struct qb_pd_port *port)
+{
     if (qb_battery_absent(cm) && cm->pda.power_role == QB_ROLE_SINK &&
         cm->pdb.power_role == QB_ROLE_SINK)
         qb_ovp_on(cm, port == &cm->pda ? 1 : 0);
     else
         qb_ovp_off(cm, port == &cm->pda ? 1 : 0);
     qb_ovp_on(cm, port == &cm->pda ? 0 : 1);
+}
+
+bool qb_enable_buck_handoff(struct qb_manager *cm,
+                            struct qb_pd_port *port)
+{
+    int voltage_mv;
+    int current_ma;
+    int input_current_ua;
+
+    if (!cm->pump.telemetry_valid || cm->pump.charge_en != 0 ||
+        !qb_select_buck_fixed_pdo(port, &voltage_mv, &current_ma))
+        return false;
+
+    input_current_ua = voltage_mv >= 12000 ? 1500000 : 2000000;
+    cm->buck_charge_current_ua = 300000;
+    cm->buck_input_current_ua = input_current_ua;
+    qb_route_buck_input(cm, port);
+
+    if (qb_set_sgm41542_int(cm, "vbus_vindpm", 3900000) < 0 ||
+        qb_set_sgm41542_int(cm, "ibus_iindpm", input_current_ua) < 0 ||
+        qb_set_sgm41542_int(cm, "ichrg_curr", 300000) < 0 ||
+        qb_set_sgm41542(cm, "charge_en", "1") < 0 ||
+        !cm->buck.telemetry_valid || cm->buck.charge_en != 1) {
+        qb_disable_buck(cm);
+        return false;
+    }
+
+    if (!qb_request_pdo(port, voltage_mv, current_ma)) {
+        qb_disable_buck(cm);
+        return false;
+    }
+
+    QBLOG(0x4eb, "%s direct handoff voltage_mv:%d\n",
+          port->name, voltage_mv);
+    return true;
+}
+
+void qb_enable_buck(struct qb_manager *cm, struct qb_pd_port *port)
+{
+    int voltage_mv = 5000;
+
+    cm->buck_charge_current_ua = 300000;
+    qb_route_buck_input(cm, port);
 
     if (port == &cm->pda) {
         if (port->fixed_12v) {

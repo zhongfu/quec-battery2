@@ -42,11 +42,37 @@ static void qb_pump_fallback_to_buck(struct qb_manager *cm,
 static void qb_pump_handoff_to_buck(struct qb_manager *cm,
                                     struct qb_pd_port *port, int index)
 {
+    int handoff_vbat_mv = cm->pump.vbat_adc_mv;
+    int handoff_ibat_ma = cm->pump.ibat_adc_ma;
+
+    if (qb_program_buck_voltage_limit(cm) < 0) {
+        qb_pump_fallback_to_buck(cm, port, index);
+        return;
+    }
+
+    qb_ovp_off(cm, index);
+    qb_disable_pump(cm);
+    if (!cm->pump.telemetry_valid || cm->pump.charge_en != 0) {
+        cm->pump_error = true;
+        qb_disable_pump_cfg(cm, port);
+        qb_disable_buck(cm);
+        qb_disable_buck_cfg(cm, port);
+        (void)qb_request_pdo(port, 5000, port->fixed_5v_current_ma);
+        QBLOG(0x5a3, "%s",
+              "pump handoff aborted: pump disable not confirmed");
+        return;
+    }
+
+    if (!qb_enable_buck_handoff(cm, port)) {
+        qb_pump_fallback_to_buck(cm, port, index);
+        return;
+    }
+
     port->pump_handoff_complete = true;
     port->pump_handoff_samples = 0;
+    qb_enable_buck_cfg(cm, port);
     QBLOG(0x5a3, "pump handoff: vbat:%d mV ibat:%d mA",
-          cm->pump.vbat_adc_mv, cm->pump.ibat_adc_ma);
-    qb_pump_select_buck(cm, port, index);
+          handoff_vbat_mv, handoff_ibat_ma);
 }
 
 static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int index)

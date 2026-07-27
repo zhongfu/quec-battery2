@@ -140,6 +140,35 @@ static void test_pdo_parser(void)
     assert(qb_parse_pdo_line(trailing, &pdo, 0) == 0);
     assert(qb_parse_pdo_line(invalid, &pdo, 0) == 0);
 }
+static void test_buck_fixed_pdo_selection(void)
+{
+    struct qb_pd_port port;
+    int voltage_mv = 0;
+    int current_ma = 0;
+
+    memset(&port, 0, sizeof(port));
+    port.fixed_5v = true;
+    port.fixed_5v_current_ma = 3000;
+    port.fixed_9v = true;
+    port.fixed_9v_current_ma = 3000;
+    port.fixed_12v = true;
+    port.fixed_12v_current_ma = 2000;
+
+    assert(qb_select_buck_fixed_pdo(&port, &voltage_mv, &current_ma));
+    assert(voltage_mv == 12000 && current_ma == 2000);
+
+    port.fixed_12v_current_ma = 0;
+    assert(qb_select_buck_fixed_pdo(&port, &voltage_mv, &current_ma));
+    assert(voltage_mv == 9000 && current_ma == 3000);
+
+    port.fixed_9v = false;
+    assert(qb_select_buck_fixed_pdo(&port, &voltage_mv, &current_ma));
+    assert(voltage_mv == 5000 && current_ma == 3000);
+
+    port.fixed_5v = false;
+    assert(!qb_select_buck_fixed_pdo(&port, &voltage_mv, &current_ma));
+}
+
 
 static void write_test_file(const char *directory, const char *name,
                             const char *contents)
@@ -882,6 +911,7 @@ static void test_charge_state_flags(void)
 int main(void)
 {
     test_pdo_parser();
+    test_buck_fixed_pdo_selection();
     test_pd_inventory();
     test_pdo_request_safety();
     test_event_queue();
