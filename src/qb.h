@@ -26,6 +26,9 @@
 #define QB_PUMP_LIMIT_ENTRY_MARGIN_MV 100
 #define QB_PPS_VOLTAGE_STEP_MV 20
 #define QB_PUMP_LIMIT_FINE_WINDOW_MV 100
+#define QB_PUMP_HANDOFF_MARGIN_MV 25
+#define QB_PUMP_HANDOFF_OVERSHOOT_MV 50
+#define QB_PUMP_HANDOFF_SAMPLES 2
 
 #define QB_LOG_FLAG "/tmp/quec_battery_log"
 #define QB_UCI_CONFIG "/etc/config/qlbattery"
@@ -122,6 +125,8 @@ struct qb_pd_port {
     bool working;
     bool telemetry_valid;
     unsigned telemetry_failures;
+    bool pump_handoff_complete;
+    unsigned pump_handoff_samples;
 };
 
 struct qb_sgm41542 {
@@ -299,6 +304,7 @@ void qb_mode3_charge(struct qb_manager *cm);
 int qb_enter_mode0(struct qb_manager *cm);
 int qb_enter_mode1(struct qb_manager *cm);
 bool qb_pump_allowed(struct qb_manager *cm, struct qb_pd_port *port, int vbat_mv);
+bool qb_pump_handoff_ready(struct qb_manager *cm, struct qb_pd_port *port);
 int qb_enter_mode2(struct qb_manager *cm);
 int qb_enter_mode3(struct qb_manager *cm);
 void qb_select_mode(struct qb_manager *cm);

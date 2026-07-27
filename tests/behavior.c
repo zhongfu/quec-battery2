@@ -826,6 +826,39 @@ static void test_pump_eligibility(void)
     cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
     cm.pump_error = true;
     assert(!qb_pump_allowed(&cm, &cm.pdb, 3700));
+    cm.pump_error = false;
+    cm.pdb.pump_handoff_complete = true;
+    assert(!qb_pump_allowed(&cm, &cm.pdb, 3700));
+}
+
+static void test_pump_handoff_policy(void)
+{
+    struct qb_manager cm;
+
+    memset(&cm, 0, sizeof(cm));
+    cm.charge_limit_mv = 4050;
+    cm.full_voltage_mv = 4050;
+    cm.pump.ibat_adc_ma = 5300;
+
+    cm.pump.vbat_adc_mv = 4024;
+    assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
+    assert(cm.pdb.pump_handoff_samples == 0);
+    cm.pump.vbat_adc_mv = 4025;
+    assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
+    assert(cm.pdb.pump_handoff_samples == 1);
+    assert(qb_pump_handoff_ready(&cm, &cm.pdb));
+    assert(cm.pdb.pump_handoff_samples == 0);
+
+    cm.pump.vbat_adc_mv = 4100;
+    assert(qb_pump_handoff_ready(&cm, &cm.pdb));
+
+    cm.charge_limit_mv = 0;
+    cm.pd_full_mv = 4200;
+    cm.pump.vbat_adc_mv = 4200;
+    cm.pump.ibat_adc_ma = 2001;
+    assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
+    cm.pump.ibat_adc_ma = 2000;
+    assert(qb_pump_handoff_ready(&cm, &cm.pdb));
 }
 
 static void test_charge_state_flags(void)
@@ -865,6 +898,7 @@ int main(void)
     test_bounded_pps_ceiling();
     test_fixed_charge_ramp();
     test_pump_eligibility();
+    test_pump_handoff_policy();
     test_charge_state_flags();
     puts("behavior regression suite passed");
     return 0;

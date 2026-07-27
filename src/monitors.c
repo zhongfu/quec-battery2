@@ -22,15 +22,31 @@ static bool qb_pump_running_for(struct qb_manager *cm, struct qb_pd_port *port)
            qb_battery_present(cm) && port->power_role == QB_ROLE_SINK;
 }
 
-static void qb_pump_fallback_to_buck(struct qb_manager *cm,
-                                     struct qb_pd_port *port, int index)
+static void qb_pump_select_buck(struct qb_manager *cm,
+                                struct qb_pd_port *port, int index)
 {
-    cm->pump_error = true;
     qb_ovp_off(cm, index);
     qb_disable_pump(cm);
     qb_disable_pump_cfg(cm, port);
     (void)qb_request_pdo(port, 5000, port->fixed_5v_current_ma);
     qb_enable_buck_cfg(cm, port);
+}
+
+static void qb_pump_fallback_to_buck(struct qb_manager *cm,
+                                     struct qb_pd_port *port, int index)
+{
+    cm->pump_error = true;
+    qb_pump_select_buck(cm, port, index);
+}
+
+static void qb_pump_handoff_to_buck(struct qb_manager *cm,
+                                    struct qb_pd_port *port, int index)
+{
+    port->pump_handoff_complete = true;
+    port->pump_handoff_samples = 0;
+    QBLOG(0x5a3, "pump handoff: vbat:%d mV ibat:%d mA",
+          cm->pump.vbat_adc_mv, cm->pump.ibat_adc_ma);
+    qb_pump_select_buck(cm, port, index);
 }
 
 static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int index)
@@ -71,6 +87,7 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
         qb_pump_fallback_to_buck(cm, port, index);
         return;
     }
+    port->pump_handoff_samples = 0;
 
     while (qb_pump_running_for(cm, port)) {
         if (qb_interruptible_sleep(cm, 2))
@@ -93,10 +110,11 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
         }
         qb_pump_pps_control(cm);
 
-        if ((!cm->charge_limit_mv &&
-             cm->pump.vbat_adc_mv >= cm->pd_full_mv &&
-             cm->pump.ibat_adc_ma <= 2000) ||
-            cm->pump_error || cm->pump.vbat_adc_mv < 3401 ||
+        if (qb_pump_handoff_ready(cm, port)) {
+            qb_pump_handoff_to_buck(cm, port, index);
+            return;
+        }
+        if (cm->pump_error || cm->pump.vbat_adc_mv < 3401 ||
             !port->supports_pps ||
             cm->temp_status < QB_TEMP_NORMAL ||
             cm->temp_status > QB_TEMP_WARM) {

@@ -220,6 +220,8 @@ static void qb_apply_port_event(struct qb_manager *cm, struct qb_pd_port *port,
     if (!strcmp(value, "cc_none")) {
         port->attached = false;
         cm->hiz_status = 0;
+        port->pump_handoff_complete = false;
+        port->pump_handoff_samples = 0;
     } else {
         port->attached = true;
     }
