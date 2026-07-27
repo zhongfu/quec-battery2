@@ -200,17 +200,32 @@ int qb_sgm41600_voltage_registers(int target_mv, unsigned *bat_ovp,
                                   unsigned *regulation)
 {
     int rounded_mv;
+    int bat_ovp_mv;
+    int regulation_offset_mv;
     unsigned ovp_code;
 
     if (!bat_ovp || !regulation ||
         target_mv < QB_MIN_CHARGE_LIMIT_MV ||
-        target_mv > QB_MAX_CHARGE_LIMIT_MV)
+        target_mv > QB_PUMP_MAX_REGULATION_MV)
         return -1;
 
     rounded_mv = target_mv - target_mv % 25;
-    ovp_code = (unsigned)(rounded_mv + 200 - 4000) / 25;
+    bat_ovp_mv = rounded_mv + 50;
+    if (bat_ovp_mv < 4000) {
+        regulation_offset_mv = 4000 - rounded_mv;
+        regulation_offset_mv =
+            ((regulation_offset_mv + 49) / 50) * 50;
+        bat_ovp_mv = rounded_mv + regulation_offset_mv;
+    }
+    regulation_offset_mv = bat_ovp_mv - rounded_mv;
+    if (regulation_offset_mv < 50 || regulation_offset_mv > 200 ||
+        regulation_offset_mv % 50)
+        return -1;
+
+    ovp_code = (unsigned)(bat_ovp_mv - 4000) / 25;
     *bat_ovp = 0x80u | ovp_code;
-    *regulation = 0x47u;
+    *regulation =
+        0x44u | (unsigned)(regulation_offset_mv / 50 - 1);
     return rounded_mv;
 }
 
@@ -238,7 +253,7 @@ int qb_program_pump_voltage_limit(struct qb_manager *cm)
     if (!cm->charge_limit_mv)
         return 0;
     target_mv = qb_sgm41600_voltage_registers(
-        cm->full_voltage_mv, &bat_ovp, &regulation);
+        qb_pump_regulation_target_mv(cm), &bat_ovp, &regulation);
     if (target_mv < 0)
         return -1;
     if (target_mv == cm->programmed_pump_voltage_mv)

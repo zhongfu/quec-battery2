@@ -15,7 +15,6 @@
 #define QB_SAFE_MAX_SHUTDOWN_MV 3800
 #define QB_PPS_MIN_VOLTAGE_MV 6600
 #define QB_STOCK_MAX_PPS_VOLTAGE_MV 9800
-#define QB_MIN_PD_FULL_MV 3401
 #define QB_STOCK_PD_FULL_MV 4200
 #define QB_MIN_CHARGE_LIMIT_MV 3800
 #define QB_MAX_CHARGE_LIMIT_MV 4200
@@ -26,8 +25,12 @@
 #define QB_PUMP_LIMIT_ENTRY_MARGIN_MV 100
 #define QB_PPS_VOLTAGE_STEP_MV 20
 #define QB_PUMP_LIMIT_FINE_WINDOW_MV 100
-#define QB_PUMP_HANDOFF_MARGIN_MV 25
 #define QB_PUMP_HANDOFF_OVERSHOOT_MV 50
+#define QB_PUMP_REGULATION_HEADROOM_MV 100
+#define QB_PUMP_MAX_REGULATION_MV 4300
+#define QB_PUMP_CV_LOWER_MARGIN_MV 25
+#define QB_PUMP_HANDOFF_CURRENT_MA 1500
+#define QB_LIMITED_BUCK_CURRENT_MA 1000
 #define QB_PUMP_HANDOFF_SAMPLES 2
 
 #define QB_LOG_FLAG "/tmp/quec_battery_log"
@@ -201,7 +204,6 @@ struct qb_manager {
     int current_state;
     int otg_mode;
 
-    int pd_full_mv;
     int full_voltage_mv;
     int charge_current_ma;
     int pps_voltage_mv;
@@ -299,6 +301,9 @@ void qb_no_charge(struct qb_manager *cm);
 void qb_pump_pps_control(struct qb_manager *cm);
 void qb_fixed_charge_control(struct qb_manager *cm);
 int qb_pump_target_mv(const struct qb_manager *cm);
+int qb_pump_control_target_mv(const struct qb_manager *cm);
+int qb_pump_regulation_target_mv(const struct qb_manager *cm);
+int qb_buck_current_ceiling_ma(const struct qb_manager *cm);
 int qb_pump_start_voltage_mv(const struct qb_manager *cm, int battery_mv);
 bool qb_pump_entry_voltage_ok(const struct qb_manager *cm, int battery_mv);
 int qb_select_qc_max_voltage(struct qb_manager *cm);

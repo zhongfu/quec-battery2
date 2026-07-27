@@ -43,23 +43,54 @@ int qb_pump_start_voltage_mv(const struct qb_manager *cm, int battery_mv)
 
 int qb_pump_target_mv(const struct qb_manager *cm)
 {
-    return cm->charge_limit_mv ? cm->full_voltage_mv : cm->pd_full_mv;
+    if (cm->full_voltage_mv > 0 &&
+        cm->full_voltage_mv < QB_STOCK_PD_FULL_MV)
+        return cm->full_voltage_mv;
+    return QB_STOCK_PD_FULL_MV;
 }
+int qb_pump_control_target_mv(const struct qb_manager *cm)
+{
+    return qb_pump_target_mv(cm);
+}
+int qb_pump_regulation_target_mv(const struct qb_manager *cm)
+{
+    int target_mv =
+        qb_pump_target_mv(cm) + QB_PUMP_REGULATION_HEADROOM_MV;
+
+    return target_mv < QB_PUMP_MAX_REGULATION_MV ?
+           target_mv : QB_PUMP_MAX_REGULATION_MV;
+}
+
+
+int qb_buck_current_ceiling_ma(const struct qb_manager *cm)
+{
+    int ceiling_ma = cm->charge_current_ma;
+
+    if (cm->charge_limit_mv &&
+        (cm->pda.pump_handoff_complete ||
+         cm->pdb.pump_handoff_complete) &&
+        ceiling_ma > QB_LIMITED_BUCK_CURRENT_MA)
+        ceiling_ma = QB_LIMITED_BUCK_CURRENT_MA;
+    return ceiling_ma > 0 ? ceiling_ma : 0;
+}
+
 
 bool qb_pump_handoff_ready(struct qb_manager *cm, struct qb_pd_port *port)
 {
     int vbat = cm->pump.vbat_adc_mv;
     int target_mv = qb_pump_target_mv(cm);
+    int control_target_mv = qb_pump_control_target_mv(cm);
 
     if (!cm->charge_limit_mv) {
         port->pump_handoff_samples = 0;
-        return vbat >= cm->pd_full_mv && cm->pump.ibat_adc_ma <= 2000;
+        return vbat >= target_mv && cm->pump.ibat_adc_ma <= 2000;
     }
     if (vbat >= target_mv + QB_PUMP_HANDOFF_OVERSHOOT_MV) {
         port->pump_handoff_samples = 0;
         return true;
     }
-    if (vbat < target_mv - QB_PUMP_HANDOFF_MARGIN_MV) {
+    if (vbat < control_target_mv - QB_PUMP_CV_LOWER_MARGIN_MV ||
+        cm->pump.ibat_adc_ma > QB_PUMP_HANDOFF_CURRENT_MA) {
         port->pump_handoff_samples = 0;
         return false;
     }
@@ -72,7 +103,7 @@ bool qb_pump_handoff_ready(struct qb_manager *cm, struct qb_pd_port *port)
 void qb_pump_pps_control(struct qb_manager *cm)
 {
     int vbat = cm->pump.vbat_adc_mv;
-    int target_mv = qb_pump_target_mv(cm);
+    int target_mv = qb_pump_control_target_mv(cm);
     int next;
     int adjustment_mv;
     int bounded_ceiling_mv = 0;
@@ -85,7 +116,9 @@ void qb_pump_pps_control(struct qb_manager *cm)
         bounded_ceiling_mv =
             target_mv * QB_PUMP_LIMIT_RATIO_PERCENT / 100;
 
-    if ((cm->charge_limit_mv ? vbat < target_mv : vbat <= target_mv) &&
+
+    if ((cm->charge_limit_mv ?
+         vbat < target_mv - QB_PUMP_CV_LOWER_MARGIN_MV : vbat <= target_mv) &&
         cm->pump.ibat_adc_ma < cm->charge_current_ma - 300) {
         next = cm->pps_voltage_mv +
                (near_limit ? QB_PPS_VOLTAGE_STEP_MV : 100);
@@ -97,7 +130,7 @@ void qb_pump_pps_control(struct qb_manager *cm)
         cm->pps_voltage_mv = next;
     }
 
-    if ((cm->charge_limit_mv && vbat >= target_mv) ||
+    if ((cm->charge_limit_mv && vbat > target_mv) ||
         cm->pump.ibat_adc_ma > cm->charge_current_ma || vbat > 4300) {
         adjustment_mv = 50;
         if (near_limit)
@@ -132,6 +165,7 @@ void qb_pump_pps_control(struct qb_manager *cm)
 void qb_fixed_charge_control(struct qb_manager *cm)
 {
     int vbus = cm->buck.vbus_adc_mv;
+    int current_ceiling_ma = qb_buck_current_ceiling_ma(cm);
 
     if (!vbus)
         return;
@@ -152,14 +186,13 @@ void qb_fixed_charge_control(struct qb_manager *cm)
         else
             cm->fixed_charge_current_ma = 0;
     } else if (vbus >= 4801 &&
-               cm->fixed_charge_current_ma < cm->charge_current_ma) {
+               cm->fixed_charge_current_ma < current_ceiling_ma) {
         cm->fixed_charge_current_ma += 200;
     }
     if (cm->fixed_charge_current_ma < 0)
         cm->fixed_charge_current_ma = 0;
-    if (cm->fixed_charge_current_ma > cm->charge_current_ma)
-        cm->fixed_charge_current_ma =
-            cm->charge_current_ma > 0 ? cm->charge_current_ma : 0;
+    if (cm->fixed_charge_current_ma > current_ceiling_ma)
+        cm->fixed_charge_current_ma = current_ceiling_ma;
     qb_set_sgm41542_int(cm, "ichrg_curr", cm->fixed_charge_current_ma * 1000);
 
     if (!cm->buck.ibat_adc_ma && cm->hiz_status == 2 &&

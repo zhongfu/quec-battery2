@@ -134,12 +134,12 @@ static void qb_pump_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
             qb_pump_fallback_to_buck(cm, port, index);
             return;
         }
-        qb_pump_pps_control(cm);
-
         if (qb_pump_handoff_ready(cm, port)) {
             qb_pump_handoff_to_buck(cm, port, index);
             return;
         }
+        if (!port->pump_handoff_samples)
+            qb_pump_pps_control(cm);
         if (cm->pump_error || cm->pump.vbat_adc_mv < 3401 ||
             !port->supports_pps ||
             cm->temp_status < QB_TEMP_NORMAL ||

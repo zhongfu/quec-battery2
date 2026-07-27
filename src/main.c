@@ -23,7 +23,6 @@ static void qb_manager_init(struct qb_manager *cm)
     cm->max_current_ma = QB_STOCK_MAX_CURRENT_MA;
     cm->min_shutdown_mv = QB_STOCK_MIN_SHUTDOWN_MV;
     cm->max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
-    cm->pd_full_mv = QB_STOCK_PD_FULL_MV;
     cm->full_voltage_mv = 4400;
     cm->charge_current_ma = QB_STOCK_MAX_CURRENT_MA;
     cm->fixed_charge_current_ma = 300;

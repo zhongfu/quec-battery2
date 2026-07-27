@@ -80,7 +80,6 @@ static void qb_validate_config(struct qb_manager *cm)
     int raw_max_current_ma = cm->max_current_ma;
     int raw_min_shutdown_mv = cm->min_shutdown_mv;
     int raw_max_pd_vbus_mv = cm->max_pd_vbus_mv;
-    int raw_pd_full_mv = cm->pd_full_mv;
     int raw_charge_limit_mv = cm->charge_limit_mv;
     int raw_charge_limit_percent = cm->charge_limit_percent;
 
@@ -91,8 +90,6 @@ static void qb_validate_config(struct qb_manager *cm)
                  QB_SAFE_MAX_SHUTDOWN_MV);
     cm->max_pd_vbus_mv =
         qb_clamp(cm->max_pd_vbus_mv, 0, QB_STOCK_MAX_PPS_VOLTAGE_MV);
-    cm->pd_full_mv =
-        qb_clamp(cm->pd_full_mv, QB_MIN_PD_FULL_MV, QB_STOCK_PD_FULL_MV);
     if (cm->charge_limit_mv < 0)
         cm->charge_limit_mv = 0;
     else if (cm->charge_limit_mv > 0)
@@ -111,8 +108,6 @@ static void qb_validate_config(struct qb_manager *cm)
           raw_min_shutdown_mv, cm->min_shutdown_mv);
     QBLOG(0x11, "max_pd_vbus_mv raw:%d effective:%d\n",
           raw_max_pd_vbus_mv, cm->max_pd_vbus_mv);
-    QBLOG(0x13, "pd_full_mv raw:%d effective:%d\n",
-          raw_pd_full_mv, cm->pd_full_mv);
     QBLOG(0x15, "charge_limit_mv raw:%d effective:%d\n",
           raw_charge_limit_mv, cm->charge_limit_mv);
     QBLOG(0x17, "charge_limit_percent raw:%d effective:%d\n",
@@ -139,8 +134,6 @@ static void qb_parse_config_line(struct qb_manager *cm, char *line)
         cm->min_shutdown_mv = parsed;
     else if (strcmp(key, "max_pd_vbus_mv") == 0)
         cm->max_pd_vbus_mv = parsed;
-    else if (strcmp(key, "pd_full_mv") == 0)
-        cm->pd_full_mv = parsed;
     else if (strcmp(key, "charge_limit_mv") == 0)
         cm->charge_limit_mv = parsed;
     else if (strcmp(key, "charge_limit_percent") == 0)
