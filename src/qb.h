@@ -24,6 +24,8 @@
 #define QB_PUMP_START_RATIO_PERCENT 220
 #define QB_PUMP_LIMIT_RATIO_PERCENT 220
 #define QB_PUMP_LIMIT_ENTRY_MARGIN_MV 100
+#define QB_PPS_VOLTAGE_STEP_MV 20
+#define QB_PUMP_LIMIT_FINE_WINDOW_MV 100
 
 #define QB_LOG_FLAG "/tmp/quec_battery_log"
 #define QB_UCI_CONFIG "/etc/config/qlbattery"

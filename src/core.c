@@ -51,7 +51,12 @@ void qb_pump_pps_control(struct qb_manager *cm)
     int vbat = cm->pump.vbat_adc_mv;
     int target_mv = qb_pump_target_mv(cm);
     int next;
+    int adjustment_mv;
     int bounded_ceiling_mv = 0;
+    bool near_limit =
+        cm->charge_limit_mv &&
+        vbat >= target_mv - QB_PUMP_LIMIT_FINE_WINDOW_MV &&
+        vbat < target_mv + QB_PUMP_LIMIT_FINE_WINDOW_MV;
 
     if (cm->charge_limit_mv)
         bounded_ceiling_mv =
@@ -59,7 +64,8 @@ void qb_pump_pps_control(struct qb_manager *cm)
 
     if ((cm->charge_limit_mv ? vbat < target_mv : vbat <= target_mv) &&
         cm->pump.ibat_adc_ma < cm->charge_current_ma - 300) {
-        next = cm->pps_voltage_mv + 100;
+        next = cm->pps_voltage_mv +
+               (near_limit ? QB_PPS_VOLTAGE_STEP_MV : 100);
         if (next >= vbat * 235 / 100)
             next = cm->pps_voltage_mv;
         if (bounded_ceiling_mv && next > bounded_ceiling_mv)
@@ -70,8 +76,12 @@ void qb_pump_pps_control(struct qb_manager *cm)
 
     if ((cm->charge_limit_mv && vbat >= target_mv) ||
         cm->pump.ibat_adc_ma > cm->charge_current_ma || vbat > 4300) {
-        next = cm->pps_voltage_mv -
-               (cm->charge_limit_mv && vbat >= target_mv ? 100 : 50);
+        adjustment_mv = 50;
+        if (near_limit)
+            adjustment_mv = QB_PPS_VOLTAGE_STEP_MV;
+        else if (cm->charge_limit_mv && vbat >= target_mv)
+            adjustment_mv = 100;
+        next = cm->pps_voltage_mv - adjustment_mv;
         if (next <= vbat * 202 / 100)
             next = cm->pps_voltage_mv;
         next = qb_limit_pps_voltage(cm, next);

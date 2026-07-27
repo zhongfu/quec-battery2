@@ -727,10 +727,25 @@ static void test_bounded_pps_ceiling(void)
 
     cm.pps_voltage_mv = 8920;
     qb_pump_pps_control(&cm);
-    assert(cm.pps_voltage_mv == 9020);
+    assert(cm.pps_voltage_mv == 8940);
 
     qb_pump_pps_control(&cm);
-    assert(cm.pps_voltage_mv == 9020);
+    assert(cm.pps_voltage_mv == 8960);
+
+    cm.pump.vbat_adc_mv = 3999;
+    cm.pps_voltage_mv = 8800;
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 8900);
+
+    cm.pump.vbat_adc_mv = 4100;
+    cm.pps_voltage_mv = 8900;
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 8880);
+
+    cm.pump.vbat_adc_mv = 4200;
+    cm.pps_voltage_mv = 9000;
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 8900);
 }
 
 static void test_fixed_charge_ramp(void)
