@@ -146,13 +146,19 @@ Requests remain capped at 2.2 times the effective battery-voltage target. A
 battery voltage at least 100 mV above the target restores a 100 mV retreat.
 For an active voltage limit, two consecutive pump readings within 25 mV below
 the target initiate a clean handoff to the SGM41542S; a reading 50 mV above the
-target initiates it immediately. The daemon disables the pump, returns PD to
-5 V, and latches the selected port to buck charging until that cable detaches.
-This prevents prolonged SGM41600 `VBAT_REG` operation, which can increase the
-external OVPFET voltage drop enough to trip `VDRP_OVP`. Without an active
-voltage limit, the recovered handoff remains battery voltage at or above
-`pd_full_mv` with pump battery current at or below 2000 mA. Pump startup,
-telemetry, capability, and protection failures use the same electrical
+target initiates it immediately. The daemon pre-programs the buck voltage and
+termination state, disables the pump, and verifies that its converter is off
+before enabling the SGM41542S at a conservative 300 mA. It then requests the
+highest advertised fixed PDO directly—12 V, 9 V, or 5 V—without an intermediate
+5 V reset, and ramps buck current only after the handoff. The selected port is
+latched to buck charging until that cable detaches. This avoids overlapping the
+two battery-charging converters while minimizing the interruption and prevents
+prolonged SGM41600 `VBAT_REG` operation, which can increase the external OVPFET
+voltage drop enough to trip `VDRP_OVP`. If pump shutdown cannot be confirmed,
+the buck remains disabled and PD is returned to 5 V. Without an active voltage
+limit, the recovered handoff remains battery voltage at or above `pd_full_mv`
+with pump battery current at or below 2000 mA. Pump startup, telemetry,
+capability, and protection failures use the conservative 5 V electrical
 fallback without being classified as a completed charge handoff.
 
 For example, a 4.00 V ceiling combined with an 80% capacity limit:
