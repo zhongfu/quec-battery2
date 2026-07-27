@@ -89,7 +89,6 @@ This fork makes the stock charging settings and the optional voltage limit in
 | `max_current_ma` | 5300 mA | 0–5300 mA | Caps every thermal charging-current result; `0` disables buck and pump charging |
 | `min_shutdown_mv` | 3400 mV | 3400–3800 mV | Sets the no-adapter low-voltage shutdown threshold |
 | `max_pd_vbus_mv` | 9800 mV | 0–9800 mV | Caps every PPS voltage request; values below 6600 mV disable PPS |
-| `pd_full_mv` | 4200 mV | 3401–4200 mV | With no active voltage limit, sets the pump-to-buck transition voltage used together with a 2000 mA battery-current threshold |
 | `charge_limit_mv` | 0 (disabled) | 0, or 3800–4200 mV | Applies a terminating CV ceiling with coordinated SGM41600/PPS bulk charging and SGM41542S completion |
 | `charge_limit_percent` | 0 (disabled) | 0 (disabled), or 1–100% | Holds battery charge current at zero after three samples at the limit; resumes after three samples at least three percentage points lower |
 
@@ -118,12 +117,12 @@ current and PPS voltage cannot exceed the stock maxima, shutdown cannot occur
 below the stock floor, and PPS cannot remain active above the stock full
 threshold.
 
-The 3800 mV active floor comes from the SGM41600 charge-pump regulation path.
-Its minimum `BAT_OVP` threshold is 4000 mV, and `VBAT_REG` can regulate at most
-200 mV below `BAT_OVP`; the lowest representable pump target is therefore
-3800 mV. At that target the daemon programs `BAT_OVP` to 4000 mV and
-`VBAT_REG` to 200 mV below it. Pump targets are rounded downward to 25 mV
-steps. The SGM41542S buck charger itself supports lower `VREG` values, down to
+The 3800 mV active floor is retained from the SGM41600 charge-pump policy.
+The daemon places the pump's hardware `VBAT_REG` point 100 mV above the
+effective software target, capped at 4300 mV. At the 3800 mV floor this yields
+a 3900 mV regulation point and a 4000 mV `BAT_OVP` threshold. Pump register
+targets are rounded downward to 25 mV steps.
+The SGM41542S buck charger itself supports lower `VREG` values, down to
 3500 mV in 10 mV steps, but this daemon does not interpret a sub-3800 mV
 setting as a request for buck-only charging. Any positive value below 3800 mV
 is clamped to 3800 mV instead.
@@ -140,26 +139,33 @@ provides enough voltage headroom for input current to cross the SGM41600's
 programmed under-current threshold despite cable and board-path voltage drop.
 After divider mode is confirmed, the daemon retains the recovered 100 mV
 approach steps until the battery enters the final 100 mV around an active
-voltage target. Inside the window it changes the PPS request in protocol-native
-20 mV steps, in either direction, for finer current and voltage regulation.
-Requests remain capped at 2.2 times the effective battery-voltage target. A
-battery voltage at least 100 mV above the target restores a 100 mV retreat.
-For an active voltage limit, two consecutive pump readings within 25 mV below
-the target initiate a clean handoff to the SGM41542S; a reading 50 mV above the
-target initiates it immediately. The daemon pre-programs the buck voltage and
-termination state, disables the pump, and verifies that its converter is off
-before enabling the SGM41542S at a conservative 300 mA. It then requests the
-highest advertised fixed PDO directly—12 V, 9 V, or 5 V—without an intermediate
-5 V reset, and ramps buck current only after the handoff. The selected port is
-latched to buck charging until that cable detaches. This avoids overlapping the
-two battery-charging converters while minimizing the interruption and prevents
-prolonged SGM41600 `VBAT_REG` operation, which can increase the external OVPFET
-voltage drop enough to trip `VDRP_OVP`. If pump shutdown cannot be confirmed,
-the buck remains disabled and PD is returned to 5 V. Without an active voltage
-limit, the recovered handoff remains battery voltage at or above `pd_full_mv`
-with pump battery current at or below 2000 mA. Pump startup, telemetry,
-capability, and protection failures use the conservative 5 V electrical
-fallback without being classified as a completed charge handoff.
+voltage target. Inside the window it uses protocol-native 20 mV PPS steps.
+It does not raise PPS while pump `vbat_adc` is in the asymmetric dead zone from
+25 mV below the target through the target, and lowers PPS whenever that ADC is
+above the target. Requests remain capped at 2.2 times the effective
+battery-voltage target. A battery voltage at least 100 mV above the target
+restores a 100 mV retreat.
+
+For an active voltage limit, two consecutive pump samples at or above 25 mV
+below the target and at or below 1500 mA initiate a clean handoff to the
+SGM41542S. The first qualifying sample suppresses only that pass's PPS
+adjustment; it does not create a persistent voltage hold. A reading 50 mV above
+the target initiates handoff immediately. The daemon pre-programs the buck
+voltage and termination state, disables the pump, and verifies that its
+converter is off before enabling the SGM41542S at a conservative 300 mA. It
+then requests the highest advertised fixed PDO directly—12 V, 9 V, or 5 V—
+without an intermediate 5 V reset, ramps buck current only after the handoff,
+and caps that current at 1000 mA. The selected port is latched to buck charging
+until that cable detaches. This avoids overlapping the two battery-charging
+converters while minimizing the interruption and prevents prolonged SGM41600
+`VBAT_REG` operation, which can increase the external OVPFET voltage drop
+enough to trip `VDRP_OVP`. If pump shutdown cannot be confirmed, the buck
+remains disabled and PD is returned to 5 V. Without an active configured
+voltage limit, handoff uses the effective full-voltage target, capped at the
+stock 4200 mV boundary, together with the recovered 2000 mA battery-current
+threshold. Pump startup, telemetry, capability, and protection failures use
+the conservative 5 V electrical fallback without being classified as a
+completed charge handoff.
 
 For example, a 4.00 V ceiling combined with an 80% capacity limit:
 
@@ -178,9 +184,10 @@ cycle-aging limits. The standard power-supply `constant_charge_voltage`
 attribute writes the same hardware register on this target, but its read method
 always reports zero. The daemon therefore verifies the setting through `vreg`
 and reapplies it if the charger register drifts or resets. For PPS charging it
-programs SGM41600 `BAT_OVP` and `VBAT_REG` with a 200 mV regulation margin and
-disables the 650 ms regulation timeout. SGM41600 regulation is quantized
-downward to its 25 mV protection steps; the SGM41542S uses its 10 mV CV steps.
+programs SGM41600 `VBAT_REG` 100 mV above the software target, capped at
+4300 mV, and normally places `BAT_OVP` another 50 mV higher. It also disables
+the 650 ms regulation timeout. SGM41600 regulation is quantized downward to its
+25 mV protection steps; the SGM41542S uses its 10 mV CV steps.
 
 PPS feedback, fine adjustment, and handoff decisions use the SGM41600
 `vbat_adc` reading. The `vbat:` field in the gauge-monitor log is instead the
