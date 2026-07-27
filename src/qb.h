@@ -21,7 +21,7 @@
 #define QB_MAX_CHARGE_LIMIT_MV 4200
 #define QB_CAPACITY_LIMIT_HYSTERESIS 3
 #define QB_CAPACITY_LIMIT_SAMPLES 3
-#define QB_PUMP_START_RATIO_PERCENT 210
+#define QB_PUMP_START_RATIO_PERCENT 220
 #define QB_PUMP_LIMIT_RATIO_PERCENT 220
 #define QB_PUMP_LIMIT_ENTRY_MARGIN_MV 100
 
@@ -296,6 +296,7 @@ void qb_mode2_charge(struct qb_manager *cm);
 void qb_mode3_charge(struct qb_manager *cm);
 int qb_enter_mode0(struct qb_manager *cm);
 int qb_enter_mode1(struct qb_manager *cm);
+bool qb_pump_allowed(struct qb_manager *cm, struct qb_pd_port *port, int vbat_mv);
 int qb_enter_mode2(struct qb_manager *cm);
 int qb_enter_mode3(struct qb_manager *cm);
 void qb_select_mode(struct qb_manager *cm);

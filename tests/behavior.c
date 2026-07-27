@@ -716,7 +716,7 @@ static void test_bounded_pps_ceiling(void)
     cm.pump.vbat_adc_mv = 4022;
     cm.pump.ibat_adc_ma = 0;
     cm.pump.ibus_adc_ma = 1;
-    assert(qb_pump_start_voltage_mv(&cm, 4022) == 8446);
+    assert(qb_pump_start_voltage_mv(&cm, 4022) == 8848);
     assert(qb_pump_entry_voltage_ok(&cm, 3999));
     assert(!qb_pump_entry_voltage_ok(&cm, 4000));
     assert(!qb_pump_entry_voltage_ok(&cm, 4060));
@@ -789,6 +789,30 @@ static void test_battery_presence_policy(void)
     assert(!qb_battery_absent(&cm));
 }
 
+static void test_pump_eligibility(void)
+{
+    struct qb_manager cm;
+
+    memset(&cm, 0, sizeof(cm));
+    cm.battery.presence = QB_BATTERY_PRESENT;
+    cm.battery.telemetry_valid = true;
+    cm.pump.telemetry_valid = true;
+    cm.pdb.telemetry_valid = true;
+    cm.pdb.supports_pps = true;
+    cm.pdb.pps_min_voltage_mv = QB_PPS_MIN_VOLTAGE_MV;
+    cm.charge_current_ma = QB_STOCK_MAX_CURRENT_MA;
+    cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
+    cm.pd_full_mv = 4050;
+    cm.temp_status = QB_TEMP_NORMAL;
+
+    assert(qb_pump_allowed(&cm, &cm.pdb, 3700));
+    cm.max_pd_vbus_mv = 0;
+    assert(!qb_pump_allowed(&cm, &cm.pdb, 3700));
+    cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
+    cm.pump_error = true;
+    assert(!qb_pump_allowed(&cm, &cm.pdb, 3700));
+}
+
 static void test_charge_state_flags(void)
 {
     struct qb_manager cm;
@@ -825,6 +849,7 @@ int main(void)
     test_pps_policy_matrix();
     test_bounded_pps_ceiling();
     test_fixed_charge_ramp();
+    test_pump_eligibility();
     test_charge_state_flags();
     puts("behavior regression suite passed");
     return 0;

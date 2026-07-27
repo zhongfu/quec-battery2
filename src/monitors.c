@@ -25,6 +25,7 @@ static bool qb_pump_running_for(struct qb_manager *cm, struct qb_pd_port *port)
 static void qb_pump_fallback_to_buck(struct qb_manager *cm,
                                      struct qb_pd_port *port, int index)
 {
+    cm->pump_error = true;
     qb_ovp_off(cm, index);
     qb_disable_pump(cm);
     qb_disable_pump_cfg(cm, port);
@@ -192,11 +193,7 @@ static void qb_buck_run_port(struct qb_manager *cm, struct qb_pd_port *port, int
             return;
         }
 
-        if (cm->buck.vbat_adc_mv > 3400 &&
-            cm->buck.vbat_adc_mv < qb_pump_target_mv(cm) - 100 &&
-            port->supports_pps &&
-            cm->temp_status >= QB_TEMP_NORMAL && cm->temp_status <= QB_TEMP_WARM &&
-            !cm->pump_error) {
+        if (qb_pump_allowed(cm, port, cm->buck.vbat_adc_mv)) {
             qb_set_sgm41542_int(cm, "vbus_vindpm", 3900000);
             if (port == &cm->pda) {
                 qb_disable_buck_cfg(cm, port);

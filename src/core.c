@@ -4,11 +4,11 @@
 #include <string.h>
 #include <unistd.h>
 
-static bool qb_pump_allowed(struct qb_manager *cm, struct qb_pd_port *port, int vbat_mv)
+bool qb_pump_allowed(struct qb_manager *cm, struct qb_pd_port *port, int vbat_mv)
 {
     return qb_battery_present(cm) && cm->pump.telemetry_valid &&
            port->telemetry_valid && cm->battery.telemetry_valid &&
-           cm->charge_current_ma > 0 &&
+           cm->charge_current_ma > 0 && !cm->pump_error &&
            qb_pps_enabled(cm) && vbat_mv > 3400 &&
            qb_pump_entry_voltage_ok(cm, vbat_mv) &&
            port->supports_pps &&
@@ -439,17 +439,17 @@ int qb_enter_mode3(struct qb_manager *cm)
 
 void qb_select_mode(struct qb_manager *cm)
 {
-    qb_set_sgm41542_int(cm, "vbus_vindpm", 3900000);
-    qb_set_sgm41542_int(cm, "ichrg_curr", 300000);
-    qb_get_battery_online(cm);
-    cm->pump_error_count = 0;
-    cm->pump_error = false;
-
     cm->mode = cm->pda.attached && cm->pdb.attached ? QB_MODE_BOTH :
                cm->pda.attached ? QB_MODE_PORT_A :
                cm->pdb.attached ? QB_MODE_PORT_B : QB_MODE_NONE;
     if (cm->work_mode == cm->mode)
         return;
+
+    qb_set_sgm41542_int(cm, "vbus_vindpm", 3900000);
+    qb_set_sgm41542_int(cm, "ichrg_curr", 300000);
+    qb_get_battery_online(cm);
+    cm->pump_error_count = 0;
+    cm->pump_error = false;
     switch (cm->mode) {
     case QB_MODE_NONE: qb_enter_mode0(cm); break;
     case QB_MODE_PORT_A: qb_enter_mode1(cm); break;
