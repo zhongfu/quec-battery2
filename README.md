@@ -89,8 +89,8 @@ This fork makes the stock charging settings and the optional voltage limit in
 | `max_current_ma` | 5300 mA | 0–5300 mA | Caps every thermal charging-current result; `0` disables buck and pump charging |
 | `min_shutdown_mv` | 3400 mV | 3400–3800 mV | Sets the no-adapter low-voltage shutdown threshold |
 | `max_pd_vbus_mv` | 9800 mV | 0–9800 mV | Caps every PPS voltage request; values below 6600 mV disable PPS |
-| `pd_full_mv` | 4200 mV | 3401–4200 mV | Sets PPS eligibility and the pump-to-buck transition threshold |
-| `charge_limit_mv` | 0 (disabled) | 0, or 3800–4200 mV | Applies a non-terminating CV ceiling to buck charging and coordinated SGM41600/PPS voltage regulation |
+| `pd_full_mv` | 4200 mV | 3401–4200 mV | With no active voltage limit, sets the pump-to-buck transition voltage used together with a 2000 mA battery-current threshold |
+| `charge_limit_mv` | 0 (disabled) | 0, or 3800–4200 mV | Applies a terminating CV ceiling with coordinated SGM41600/PPS bulk charging and SGM41542S completion |
 | `charge_limit_percent` | 0 (disabled) | 0 (disabled), or 1–100% | Holds battery charge current at zero after three samples at the limit; resumes after three samples at least three percentage points lower |
 
 Configuration values are base-10 integers in the units shown above. A malformed
@@ -134,17 +134,26 @@ Inside that final 100 mV window the buck path is selected directly. This avoids
 starting the SGM41600 in its `VBAT_REG` region, where the rapidly falling input
 current can trigger `IBUS_UCP` and reset divider mode.
 
-When PPS charging begins below that window, the daemon starts at 2.1 times the
-measured battery voltage. This lies inside the SGM41600's default valid
-divider-mode startup window of 2.08–2.2 times `VOUT`, while avoiding the
-immediate current step caused by the former 2.2-times request. After divider
-mode is confirmed, the daemon raises the request in 100 mV steps as needed,
-capped at 2.2 times the effective battery-voltage target. Reaching the target
-does not by itself force a transition to buck: the SGM41600 remains in
-regulated PPS operation and the request is reduced as needed. If the SGM41600
-does not enter or remain in voltage-divider mode, the daemon immediately
-disables it, returns PD to 5 V, and selects buck charging. Normal safety and
-capability failures use the same fallback.
+When PPS charging begins below that window, the daemon starts at 2.2 times the
+measured battery voltage. This preserves the recovered stock startup ratio and
+provides enough voltage headroom for input current to cross the SGM41600's
+programmed under-current threshold despite cable and board-path voltage drop.
+After divider mode is confirmed, the daemon retains the recovered 100 mV
+approach steps until the battery enters the final 100 mV around an active
+voltage target. Inside the window it changes the PPS request in protocol-native
+20 mV steps, in either direction, for finer current and voltage regulation.
+Requests remain capped at 2.2 times the effective battery-voltage target. A
+battery voltage at least 100 mV above the target restores a 100 mV retreat.
+For an active voltage limit, two consecutive pump readings within 25 mV below
+the target initiate a clean handoff to the SGM41542S; a reading 50 mV above the
+target initiates it immediately. The daemon disables the pump, returns PD to
+5 V, and latches the selected port to buck charging until that cable detaches.
+This prevents prolonged SGM41600 `VBAT_REG` operation, which can increase the
+external OVPFET voltage drop enough to trip `VDRP_OVP`. Without an active
+voltage limit, the recovered handoff remains battery voltage at or above
+`pd_full_mv` with pump battery current at or below 2000 mA. Pump startup,
+telemetry, capability, and protection failures use the same electrical
+fallback without being classified as a completed charge handoff.
 
 For example, a 4.00 V ceiling combined with an 80% capacity limit:
 
@@ -154,16 +163,24 @@ config quec_battery_configs 'settings'
 	option charge_limit_percent '80'
 ```
 
-When enabled, the daemon disables the SGM41542S termination bit and programs
-its constant-charge voltage through the readable vendor `vreg` attribute, using
-the active minimum of the configured, thermal, and cycle-aging limits. The
-standard power-supply `constant_charge_voltage` attribute writes the same
-hardware register on this target, but its read method always reports zero.
-The daemon therefore verifies the setting through `vreg` and reapplies it if
-the charger register drifts or resets. For PPS charging it programs SGM41600
-`BAT_OVP` and `VBAT_REG` with a 200 mV regulation margin and disables the
-650 ms regulation timeout. SGM41600 regulation is quantized downward to its
-25 mV protection steps; the SGM41542S uses its 10 mV CV steps.
+The daemon explicitly enables SGM41542S hardware termination whenever it
+programs the buck voltage, including after a limited-PPS handoff. The hardware
+termination-current setting is otherwise left intact; its reset value is
+180 mA. The daemon programs constant-charge voltage through the readable vendor
+`vreg` attribute, using the active minimum of the configured, thermal, and
+cycle-aging limits. The standard power-supply `constant_charge_voltage`
+attribute writes the same hardware register on this target, but its read method
+always reports zero. The daemon therefore verifies the setting through `vreg`
+and reapplies it if the charger register drifts or resets. For PPS charging it
+programs SGM41600 `BAT_OVP` and `VBAT_REG` with a 200 mV regulation margin and
+disables the 650 ms regulation timeout. SGM41600 regulation is quantized
+downward to its 25 mV protection steps; the SGM41542S uses its 10 mV CV steps.
+
+PPS feedback, fine adjustment, and handoff decisions use the SGM41600
+`vbat_adc` reading. The `vbat:` field in the gauge-monitor log is instead the
+SGM41542S ADC reading, while the CW2217 reports a third value through
+`voltage_now`. Those ADCs can have different fixed offsets, so the logged
+SGM41542S value alone does not show that PPS exceeded the configured limit.
 
 The capacity limit is evaluated only from complete, range-checked gauge
 snapshots. Three consecutive samples are required both to enter the hold and
