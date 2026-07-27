@@ -154,8 +154,10 @@ the target initiates handoff immediately. The daemon pre-programs the buck
 voltage and termination state, disables the pump, and verifies that its
 converter is off before enabling the SGM41542S at a conservative 300 mA. It
 then requests the highest advertised fixed PDO directly—12 V, 9 V, or 5 V—
-without an intermediate 5 V reset, ramps buck current only after the handoff,
-and caps that current at 1000 mA. The selected port is latched to buck charging
+without an intermediate 5 V reset and continues the normal buck-current ramp
+toward the active thermal/current ceiling. The SGM41542S then transitions from
+constant current to constant voltage at its programmed `VREG` and tapers charge
+current in hardware. The selected port is latched to buck charging
 until that cable detaches. This avoids overlapping the two battery-charging
 converters while minimizing the interruption and prevents prolonged SGM41600
 `VBAT_REG` operation, which can increase the external OVPFET voltage drop

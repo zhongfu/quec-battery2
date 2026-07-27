@@ -834,13 +834,11 @@ static void test_fixed_charge_ramp(void)
     cm.pdb.pump_handoff_complete = true;
     cm.fixed_charge_current_ma = 900;
     cm.buck.vbus_adc_mv = 9000;
-    assert(qb_buck_current_ceiling_ma(&cm) == 1000);
     qb_fixed_charge_control(&cm);
-    assert(cm.fixed_charge_current_ma == 1000);
+    assert(cm.fixed_charge_current_ma == 1100);
     qb_fixed_charge_control(&cm);
-    assert(cm.fixed_charge_current_ma == 1000);
+    assert(cm.fixed_charge_current_ma == 1300);
     cm.charge_current_ma = 800;
-    assert(qb_buck_current_ceiling_ma(&cm) == 800);
     qb_fixed_charge_control(&cm);
     assert(cm.fixed_charge_current_ma == 800);
 }

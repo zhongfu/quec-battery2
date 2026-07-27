@@ -61,20 +61,6 @@ int qb_pump_regulation_target_mv(const struct qb_manager *cm)
            target_mv : QB_PUMP_MAX_REGULATION_MV;
 }
 
-
-int qb_buck_current_ceiling_ma(const struct qb_manager *cm)
-{
-    int ceiling_ma = cm->charge_current_ma;
-
-    if (cm->charge_limit_mv &&
-        (cm->pda.pump_handoff_complete ||
-         cm->pdb.pump_handoff_complete) &&
-        ceiling_ma > QB_LIMITED_BUCK_CURRENT_MA)
-        ceiling_ma = QB_LIMITED_BUCK_CURRENT_MA;
-    return ceiling_ma > 0 ? ceiling_ma : 0;
-}
-
-
 bool qb_pump_handoff_ready(struct qb_manager *cm, struct qb_pd_port *port)
 {
     int vbat = cm->pump.vbat_adc_mv;
@@ -165,7 +151,8 @@ void qb_pump_pps_control(struct qb_manager *cm)
 void qb_fixed_charge_control(struct qb_manager *cm)
 {
     int vbus = cm->buck.vbus_adc_mv;
-    int current_ceiling_ma = qb_buck_current_ceiling_ma(cm);
+    int current_ceiling_ma =
+        cm->charge_current_ma > 0 ? cm->charge_current_ma : 0;
 
     if (!vbus)
         return;

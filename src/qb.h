@@ -30,7 +30,6 @@
 #define QB_PUMP_MAX_REGULATION_MV 4300
 #define QB_PUMP_CV_LOWER_MARGIN_MV 25
 #define QB_PUMP_HANDOFF_CURRENT_MA 1500
-#define QB_LIMITED_BUCK_CURRENT_MA 1000
 #define QB_PUMP_HANDOFF_SAMPLES 2
 
 #define QB_LOG_FLAG "/tmp/quec_battery_log"
@@ -303,7 +302,6 @@ void qb_fixed_charge_control(struct qb_manager *cm);
 int qb_pump_target_mv(const struct qb_manager *cm);
 int qb_pump_control_target_mv(const struct qb_manager *cm);
 int qb_pump_regulation_target_mv(const struct qb_manager *cm);
-int qb_buck_current_ceiling_ma(const struct qb_manager *cm);
 int qb_pump_start_voltage_mv(const struct qb_manager *cm, int battery_mv);
 bool qb_pump_entry_voltage_ok(const struct qb_manager *cm, int battery_mv);
 int qb_select_qc_max_voltage(struct qb_manager *cm);
