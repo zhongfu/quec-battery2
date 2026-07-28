@@ -74,33 +74,49 @@ static void stock_update_limits(struct qb_manager *cm)
     cm->v42_capacity = stock_v42_capacity(cm->battery.cycle_count);
 }
 
-/* FUN_001076fc. */
-static void stock_pps_control(struct qb_manager *cm)
+/* Reference model for the unified bounded PPS controller. */
+static void bounded_pps_control_reference(struct qb_manager *cm)
 {
     int vbat_mv = cm->pump.vbat_adc_mv;
+    int target_mv = cm->full_voltage_mv < QB_STOCK_PD_FULL_MV ?
+                    cm->full_voltage_mv : QB_STOCK_PD_FULL_MV;
+    int bounded_ceiling_mv =
+        target_mv * QB_PUMP_LIMIT_RATIO_PERCENT / 100;
+    bool near_limit =
+        vbat_mv >= target_mv - QB_PUMP_LIMIT_FINE_WINDOW_MV &&
+        vbat_mv < target_mv + QB_PUMP_LIMIT_FINE_WINDOW_MV;
     int next_mv;
+    int adjustment_mv;
 
-    if (vbat_mv <= QB_STOCK_PD_FULL_MV &&
+    if (vbat_mv < target_mv - QB_PUMP_CV_LOWER_MARGIN_MV &&
         cm->pump.ibat_adc_ma < cm->charge_current_ma - 300) {
-        next_mv = cm->pps_voltage_mv + 100;
+        next_mv = cm->pps_voltage_mv +
+                  (near_limit ? QB_PPS_VOLTAGE_STEP_MV : 100);
         if (next_mv >= vbat_mv * 235 / 100)
             next_mv = cm->pps_voltage_mv;
-        if (next_mv < 6600)
-            next_mv = 6600;
-        else if (next_mv > 9800)
-            next_mv = 9800;
+        if (next_mv > bounded_ceiling_mv)
+            next_mv = bounded_ceiling_mv;
+        if (next_mv < QB_PPS_MIN_VOLTAGE_MV)
+            next_mv = QB_PPS_MIN_VOLTAGE_MV;
+        else if (next_mv > cm->max_pd_vbus_mv)
+            next_mv = cm->max_pd_vbus_mv;
         cm->pps_voltage_mv = next_mv;
     }
-    if (cm->pump.ibat_adc_ma > cm->charge_current_ma || vbat_mv > 4300) {
-        next_mv = cm->pps_voltage_mv - 50;
+    if (vbat_mv > target_mv ||
+        cm->pump.ibat_adc_ma > cm->charge_current_ma || vbat_mv > 4300) {
+        adjustment_mv = near_limit ? QB_PPS_VOLTAGE_STEP_MV :
+                        (vbat_mv > target_mv ? 100 : 50);
+        next_mv = cm->pps_voltage_mv - adjustment_mv;
         if (next_mv <= vbat_mv * 202 / 100)
             next_mv = cm->pps_voltage_mv;
-        if (next_mv < 6600)
-            next_mv = 6600;
-        else if (next_mv > 9800)
-            next_mv = 9800;
+        if (next_mv < QB_PPS_MIN_VOLTAGE_MV)
+            next_mv = QB_PPS_MIN_VOLTAGE_MV;
+        else if (next_mv > cm->max_pd_vbus_mv)
+            next_mv = cm->max_pd_vbus_mv;
         cm->pps_voltage_mv = next_mv;
     }
+    if (cm->pps_voltage_mv > bounded_ceiling_mv)
+        cm->pps_voltage_mv = bounded_ceiling_mv;
 
     if (cm->pump.ibus_adc_ma == 0) {
         cm->pump_error_count++;
@@ -373,7 +389,7 @@ static void test_config_loader(void)
           "\toption max_current_ma '5100'\n"
           "\toption min_shutdown_mv \"3350\"\n"
           "\toption max_pd_vbus_mv '9600'\n"
-          "\toption charge_limit_mv '4050'\n"
+          "\toption charge_limit_mv '4057'\n"
           "\toption charge_limit_percent '80'\n", fp);
     fclose(fp);
     assert(qb_load_config_file(&cm, path) == 0);
@@ -718,7 +734,7 @@ static void test_pps_policy_matrix(void)
                     got.pump_error = true;
                     expected = got;
                     qb_pump_pps_control(&got);
-                    stock_pps_control(&expected);
+                    bounded_pps_control_reference(&expected);
                     assert(got.pps_voltage_mv == expected.pps_voltage_mv);
                     assert(got.pump_error_count == expected.pump_error_count);
                     assert(got.pump_error == expected.pump_error);
@@ -793,6 +809,21 @@ static void test_bounded_pps_ceiling(void)
     cm.pump.ibat_adc_ma = QB_PUMP_HANDOFF_CURRENT_MA + 1;
     assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
     assert(cm.pdb.pump_handoff_samples == 0);
+
+    memset(&cm, 0, sizeof(cm));
+    cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
+    cm.full_voltage_mv = 4400;
+    cm.charge_current_ma = 5300;
+    cm.pump.vbat_adc_mv = 4000;
+    cm.pump.ibat_adc_ma = 0;
+    cm.pump.ibus_adc_ma = 1;
+    assert(qb_pump_target_mv(&cm) == 4200);
+    assert(qb_pump_regulation_target_mv(&cm) == 4300);
+    assert(qb_pump_entry_voltage_ok(&cm, 4099));
+    assert(!qb_pump_entry_voltage_ok(&cm, 4100));
+    cm.pps_voltage_mv = 9500;
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 9240);
 }
 
 static void test_fixed_charge_ramp(void)
@@ -882,6 +913,8 @@ static void test_pump_eligibility(void)
     cm.temp_status = QB_TEMP_NORMAL;
 
     assert(qb_pump_allowed(&cm, &cm.pdb, 3700));
+    assert(qb_pump_entry_voltage_ok(&cm, 4099));
+    assert(!qb_pump_entry_voltage_ok(&cm, 4100));
     cm.max_pd_vbus_mv = 0;
     assert(!qb_pump_allowed(&cm, &cm.pdb, 3700));
     cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
@@ -924,10 +957,22 @@ static void test_pump_handoff_policy(void)
 
     cm.charge_limit_mv = 0;
     cm.full_voltage_mv = 4400;
-    cm.pump.vbat_adc_mv = 4200;
+    cm.pump.vbat_adc_mv = 4175;
     cm.pump.ibat_adc_ma = 2001;
     assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
+    assert(cm.pdb.pump_handoff_samples == 0);
     cm.pump.ibat_adc_ma = 2000;
+    assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
+    assert(cm.pdb.pump_handoff_samples == 1);
+    assert(qb_pump_handoff_ready(&cm, &cm.pdb));
+    assert(cm.pdb.pump_handoff_samples == 0);
+
+    cm.charge_limit_mv = 4200;
+    cm.full_voltage_mv = 4200;
+    cm.pump.ibat_adc_ma = 1501;
+    assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
+    cm.pump.ibat_adc_ma = 1500;
+    assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
     assert(qb_pump_handoff_ready(&cm, &cm.pdb));
 }
 

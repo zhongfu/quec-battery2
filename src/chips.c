@@ -250,8 +250,6 @@ int qb_program_pump_voltage_limit(struct qb_manager *cm)
     unsigned regulation;
     int target_mv;
 
-    if (!cm->charge_limit_mv)
-        return 0;
     target_mv = qb_sgm41600_voltage_registers(
         qb_pump_regulation_target_mv(cm), &bat_ovp, &regulation);
     if (target_mv < 0)

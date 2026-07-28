@@ -80,30 +80,32 @@ guard.
 
 ## Bounded charging configuration
 
-This fork makes the stock charging settings and the optional voltage limit in
-`/etc/config/qlbattery` effective. They are read once at startup from the
-`settings` section:
+This fork makes the stock charging settings and configurable final battery
+ceiling in `/etc/config/qlbattery` effective. They are read once at startup from
+the `settings` section:
 
 | Option | Fallback | Effective range | Policy |
 | --- | ---: | ---: | --- |
 | `max_current_ma` | 5300 mA | 0–5300 mA | Caps every thermal charging-current result; `0` disables buck and pump charging |
 | `min_shutdown_mv` | 3400 mV | 3400–3800 mV | Sets the no-adapter low-voltage shutdown threshold |
 | `max_pd_vbus_mv` | 9800 mV | 0–9800 mV | Caps every PPS voltage request; values below 6600 mV disable PPS |
-| `charge_limit_mv` | 0 (disabled) | 0, or 3800–4200 mV | Applies a terminating CV ceiling with coordinated SGM41600/PPS bulk charging and SGM41542S completion |
+| `charge_limit_mv` | 0 (stock policy) | 0, or 3800–4400 mV | Caps the final SGM41542S CV target; `0` uses the temperature- and cycle-derived stock ceiling |
 | `charge_limit_percent` | 0 (disabled) | 0 (disabled), or 1–100% | Holds battery charge current at zero after three samples at the limit; resumes after three samples at least three percentage points lower |
 
 Configuration values are base-10 integers in the units shown above. A malformed
 integer is ignored, leaving the prior/default value in effect. Detailed logging
 reports both the raw and effective value when `/tmp/quec_battery_log` exists.
+Voltage ceilings are rounded downward to representable 10 mV SGM41542S steps.
 The exact normalization rules for the two optional charge limits are:
 
 | Raw value | Effective `charge_limit_mv` |
 | ---: | ---: |
-| less than 0 | 0 (disabled) |
-| 0 | 0 (disabled) |
+| less than 0 | 0 (stock policy) |
+| 0 | 0 (stock policy) |
 | 1–3799 mV | 3800 mV |
-| 3800–4200 mV | unchanged |
-| greater than 4200 mV | 4200 mV |
+| 3800–4399 mV | rounded down to a 10 mV step |
+| 4400 mV | 4400 mV |
+| greater than 4400 mV | 4400 mV |
 
 | Raw value | Effective `charge_limit_percent` |
 | ---: | ---: |
@@ -112,10 +114,16 @@ The exact normalization rules for the two optional charge limits are:
 | 1–100% | unchanged |
 | greater than 100% | 100% |
 
-These bounds only allow configuration to tighten the recovered stock policy:
-current and PPS voltage cannot exceed the stock maxima, shutdown cannot occur
-below the stock floor, and PPS cannot remain active above the stock full
-threshold.
+These bounds keep current and PPS voltage within the recovered stock maxima and
+prevent shutdown below the stock floor. A positive `charge_limit_mv` can only
+tighten the temperature- and cycle-derived final battery ceiling; 4400 mV and
+the normal-policy value `0` are therefore equivalent under ordinary conditions.
+
+The daemon separates the final battery ceiling from the charge-pump endpoint.
+The final SGM41542S target is the minimum of the configured, thermal, and
+cycle-aging ceilings. The PPS target is the lower of that final target and
+4200 mV. Thus a normal `0` or 4400 mV configuration uses PPS only through
+4200 mV, then uses the SGM41542S to complete charging to 4400 mV.
 
 The 3800 mV active floor is retained from the SGM41600 charge-pump policy.
 The daemon places the pump's hardware `VBAT_REG` point 100 mV above the
@@ -127,8 +135,8 @@ The SGM41542S buck charger itself supports lower `VREG` values, down to
 setting as a request for buck-only charging. Any positive value below 3800 mV
 is clamped to 3800 mV instead.
 
-With an active voltage limit, mode selection requires the battery to be at
-least 100 mV below the effective target before the charge pump is eligible.
+For every PPS session, mode selection requires the battery to be at least
+100 mV below the effective PPS target before the charge pump is eligible.
 Inside that final 100 mV window the buck path is selected directly. This avoids
 starting the SGM41600 in its `VBAT_REG` region, where the rapidly falling input
 current can trigger `IBUS_UCP` and reset divider mode.
@@ -138,36 +146,38 @@ measured battery voltage. This preserves the recovered stock startup ratio and
 provides enough voltage headroom for input current to cross the SGM41600's
 programmed under-current threshold despite cable and board-path voltage drop.
 After divider mode is confirmed, the daemon retains the recovered 100 mV
-approach steps until the battery enters the final 100 mV around an active
-voltage target. Inside the window it uses protocol-native 20 mV PPS steps.
+approach steps until the battery enters the final 100 mV around the PPS target.
+Inside the window it uses protocol-native 20 mV PPS steps.
 It does not raise PPS while pump `vbat_adc` is in the asymmetric dead zone from
 25 mV below the target through the target, and lowers PPS whenever that ADC is
 above the target. Requests remain capped at 2.2 times the effective
 battery-voltage target. A battery voltage at least 100 mV above the target
 restores a 100 mV retreat.
 
-For an active voltage limit, two consecutive pump samples at or above 25 mV
-below the target and at or below 1500 mA initiate a clean handoff to the
-SGM41542S. The first qualifying sample suppresses only that pass's PPS
+For every PPS session, two consecutive pump samples at or above 25 mV below
+the PPS target initiate a clean handoff to the SGM41542S. The battery-current
+threshold is 1500 mA when the final target is at or below 4200 mV, and 2000 mA
+when the buck must complete charging above 4200 mV. The higher threshold avoids
+an unnecessary deep PPS taper immediately before the buck resumes higher-
+voltage charging. The first qualifying sample suppresses only that pass's PPS
 adjustment; it does not create a persistent voltage hold. A reading 50 mV above
-the target initiates handoff immediately. The daemon pre-programs the buck
-voltage and termination state, disables the pump, and verifies that its
-converter is off before enabling the SGM41542S at a conservative 300 mA. It
-then requests the highest advertised fixed PDO directly—12 V, 9 V, or 5 V—
-without an intermediate 5 V reset and continues the normal buck-current ramp
-toward the active thermal/current ceiling. The SGM41542S then transitions from
-constant current to constant voltage at its programmed `VREG` and tapers charge
-current in hardware. The selected port is latched to buck charging
-until that cable detaches. This avoids overlapping the two battery-charging
-converters while minimizing the interruption and prevents prolonged SGM41600
-`VBAT_REG` operation, which can increase the external OVPFET voltage drop
-enough to trip `VDRP_OVP`. If pump shutdown cannot be confirmed, the buck
-remains disabled and PD is returned to 5 V. Without an active configured
-voltage limit, handoff uses the effective full-voltage target, capped at the
-stock 4200 mV boundary, together with the recovered 2000 mA battery-current
-threshold. Pump startup, telemetry, capability, and protection failures use
-the conservative 5 V electrical fallback without being classified as a
-completed charge handoff.
+the PPS target initiates handoff immediately.
+
+The daemon pre-programs the buck voltage and termination state, disables the
+pump, and verifies that its converter is off before enabling the SGM41542S at a
+conservative 300 mA. It then requests the highest advertised fixed PDO
+directly—12 V, 9 V, or 5 V—without an intermediate 5 V reset and continues the
+normal buck-current ramp toward the active thermal/current ceiling. The
+SGM41542S transitions from constant current to constant voltage at the final
+target and tapers charge current in hardware. The selected port is latched to
+buck charging until that cable detaches.
+
+This avoids overlapping the two battery-charging converters and prevents
+prolonged SGM41600 `VBAT_REG` operation, which can increase the external OVPFET
+voltage drop enough to trip `VDRP_OVP`. If pump shutdown cannot be confirmed,
+the buck remains disabled and PD is returned to 5 V. Pump startup, telemetry,
+capability, and protection failures use the conservative 5 V electrical
+fallback without being classified as a completed charge handoff.
 
 For example, a 4.00 V ceiling combined with an 80% capacity limit:
 

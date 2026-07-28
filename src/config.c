@@ -96,6 +96,8 @@ static void qb_validate_config(struct qb_manager *cm)
         cm->charge_limit_mv = qb_clamp(cm->charge_limit_mv,
                                       QB_MIN_CHARGE_LIMIT_MV,
                                       QB_MAX_CHARGE_LIMIT_MV);
+    if (cm->charge_limit_mv > 0)
+        cm->charge_limit_mv -= cm->charge_limit_mv % 10;
     cm->charge_limit_percent =
         qb_clamp(cm->charge_limit_percent, 0, 100);
     if (cm->full_voltage_mv > 0)
