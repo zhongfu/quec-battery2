@@ -26,12 +26,21 @@
 #define QB_PPS_VOLTAGE_STEP_MV 20
 #define QB_PUMP_LIMIT_FINE_WINDOW_MV 100
 #define QB_PUMP_HANDOFF_OVERSHOOT_MV 50
-#define QB_PUMP_REGULATION_HEADROOM_MV 100
-#define QB_PUMP_MAX_REGULATION_MV 4300
+#define QB_PUMP_MAX_TARGET_MV 4300
+#define QB_PUMP_REGULATION_HEADROOM_MV 50
+#define QB_PUMP_MAX_REGULATION_MV 4350
 #define QB_PUMP_CV_LOWER_MARGIN_MV 25
 #define QB_PUMP_HANDOFF_CURRENT_MA 1500
-#define QB_PUMP_HIGH_TARGET_HANDOFF_CURRENT_MA 2000
 #define QB_PUMP_HANDOFF_SAMPLES 2
+#define QB_PUMP_CONTROL_INTERVAL_MS 2000
+#define QB_PUMP_NEAR_TARGET_POLL_MS 250
+#define QB_PUMP_NEAR_TARGET_WINDOW_MV 100
+#define QB_PUMP_REGULATION_CLEAR_SAMPLES 2
+#define QB_PUMP_REGULATION_MAX_STEPS 5
+#define QB_SGM41600_VDRP_OVP_FLAG 0x10
+#define QB_SGM41600_VBAT_REG_FLAG 0x20
+#define QB_SGM41600_IRQ_LABEL "2-006f"
+#define QB_PROC_INTERRUPTS "/proc/interrupts"
 
 #define QB_LOG_FLAG "/tmp/quec_battery_log"
 #define QB_UCI_CONFIG "/etc/config/qlbattery"
@@ -233,6 +242,12 @@ struct qb_manager {
     bool capacity_charge_hold;
     unsigned capacity_stop_samples;
     unsigned capacity_resume_samples;
+    int pump_pps_ceiling_mv;
+    unsigned pump_regulation_steps;
+    unsigned pump_regulation_clear_samples;
+    unsigned long long pump_irq_count;
+    bool pump_irq_valid;
+    bool pump_regulation_retreating;
 
     pthread_mutex_t reset_mutex;
     struct qb_event_queue events;
@@ -302,6 +317,7 @@ void qb_pump_pps_control(struct qb_manager *cm);
 void qb_fixed_charge_control(struct qb_manager *cm);
 int qb_pump_target_mv(const struct qb_manager *cm);
 int qb_pump_control_target_mv(const struct qb_manager *cm);
+bool qb_pump_regulation_retreat(struct qb_manager *cm);
 int qb_pump_regulation_target_mv(const struct qb_manager *cm);
 int qb_pump_start_voltage_mv(const struct qb_manager *cm, int battery_mv);
 bool qb_pump_entry_voltage_ok(const struct qb_manager *cm, int battery_mv);
@@ -339,6 +355,12 @@ int qb_sgm41600_voltage_registers(int target_mv, unsigned *bat_ovp,
                                   unsigned *regulation);
 int qb_update_register(const char *dir, unsigned reg, unsigned mask,
                        unsigned value);
+int qb_read_register_pair(const char *dir,
+                          unsigned first_reg, unsigned *first_value,
+                          unsigned second_reg, unsigned *second_value);
+int qb_read_irq_count(const char *path, const char *label,
+                      unsigned long long *count);
+int qb_interruptible_sleep_ms(struct qb_manager *cm, unsigned milliseconds);
 bool qb_update_capacity_charge_limit(struct qb_manager *cm);
 void qb_update_charge_limits(struct qb_manager *cm);
 void qb_init_temp_status(struct qb_manager *cm);

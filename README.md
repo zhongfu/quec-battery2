@@ -122,14 +122,15 @@ the normal-policy value `0` are therefore equivalent under ordinary conditions.
 The daemon separates the final battery ceiling from the charge-pump endpoint.
 The final SGM41542S target is the minimum of the configured, thermal, and
 cycle-aging ceilings. The PPS target is the lower of that final target and
-4200 mV. Thus a normal `0` or 4400 mV configuration uses PPS only through
-4200 mV, then uses the SGM41542S to complete charging to 4400 mV.
+4300 mV. Thus a normal `0` or 4400 mV configuration uses PPS through 4300 mV,
+then uses the SGM41542S to complete charging to 4400 mV.
 
 The 3800 mV active floor is retained from the SGM41600 charge-pump policy.
-The daemon places the pump's hardware `VBAT_REG` point 100 mV above the
-effective software target, capped at 4300 mV. At the 3800 mV floor this yields
-a 3900 mV regulation point and a 4000 mV `BAT_OVP` threshold. Pump register
-targets are rounded downward to 25 mV steps.
+The daemon places the pump's hardware `VBAT_REG` point 50 mV above the
+effective software target, capped at 4350 mV, and places `BAT_OVP` another
+50 mV higher. At the 3800 mV floor this yields a 3850 mV regulation point and
+a 4000 mV `BAT_OVP` threshold because 4000 mV is the chip's minimum encodable
+OVP value. Pump register targets are rounded downward to 25 mV steps.
 The SGM41542S buck charger itself supports lower `VREG` values, down to
 3500 mV in 10 mV steps, but this daemon does not interpret a sub-3800 mV
 setting as a request for buck-only charging. Any positive value below 3800 mV
@@ -155,13 +156,22 @@ battery-voltage target. A battery voltage at least 100 mV above the target
 restores a 100 mV retreat.
 
 For every PPS session, two consecutive pump samples at or above 25 mV below
-the PPS target initiate a clean handoff to the SGM41542S. The battery-current
-threshold is 1500 mA when the final target is at or below 4200 mV, and 2000 mA
-when the buck must complete charging above 4200 mV. The higher threshold avoids
-an unnecessary deep PPS taper immediately before the buck resumes higher-
-voltage charging. The first qualifying sample suppresses only that pass's PPS
-adjustment; it does not create a persistent voltage hold. A reading 50 mV above
-the PPS target initiates handoff immediately.
+the PPS target initiate a clean handoff to the SGM41542S once pump battery
+current is at or below 1500 mA. The first qualifying sample suppresses only
+that pass's PPS adjustment; it does not create a persistent voltage hold.
+A reading 50 mV above the PPS target initiates handoff immediately unless an
+active hardware-regulation retreat has already established a lower session
+PPS ceiling.
+
+The SGM41600 interrupt is owned by the kernel driver and has no pollable
+userspace event interface. The daemon therefore watches the pump's
+`2-006f` counter in `/proc/interrupts`, which avoids continuous I2C register
+reads. When the counter changes, it reads `REG0B` and `REG0D`. A
+`VBAT_REG_FLAG` starts a temporary 250 ms observation cadence and lowers PPS
+in native 20 mV steps until two post-settlement samples no longer report
+regulation. The first released voltage is retained as the PPS ceiling for the
+rest of that pump session. Five unsuccessful steps or any `VDRP_OVP_FLAG`
+causes the conservative buck fallback.
 
 The daemon pre-programs the buck voltage and termination state, disables the
 pump, and verifies that its converter is off before enabling the SGM41542S at a

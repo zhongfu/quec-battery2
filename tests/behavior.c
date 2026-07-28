@@ -78,10 +78,13 @@ static void stock_update_limits(struct qb_manager *cm)
 static void bounded_pps_control_reference(struct qb_manager *cm)
 {
     int vbat_mv = cm->pump.vbat_adc_mv;
-    int target_mv = cm->full_voltage_mv < QB_STOCK_PD_FULL_MV ?
-                    cm->full_voltage_mv : QB_STOCK_PD_FULL_MV;
+    int target_mv = cm->full_voltage_mv < QB_PUMP_MAX_TARGET_MV ?
+                    cm->full_voltage_mv : QB_PUMP_MAX_TARGET_MV;
     int bounded_ceiling_mv =
         target_mv * QB_PUMP_LIMIT_RATIO_PERCENT / 100;
+    if (cm->pump_pps_ceiling_mv > 0 &&
+        cm->pump_pps_ceiling_mv < bounded_ceiling_mv)
+        bounded_ceiling_mv = cm->pump_pps_ceiling_mv;
     bool near_limit =
         vbat_mv >= target_mv - QB_PUMP_LIMIT_FINE_WINDOW_MV &&
         vbat_mv < target_mv + QB_PUMP_LIMIT_FINE_WINDOW_MV;
@@ -565,6 +568,9 @@ static void test_charge_voltage_limit(void)
     struct qb_manager cm;
     unsigned bat_ovp;
     unsigned regulation;
+    unsigned first_register;
+    unsigned second_register;
+    unsigned long long irq_count;
     char directory[96];
     char path[128];
     char value[64];
@@ -594,7 +600,10 @@ static void test_charge_voltage_limit(void)
     assert(qb_sgm41600_voltage_registers(4300, &bat_ovp,
                                          &regulation) == 4300);
     assert(bat_ovp == 0x8e && regulation == 0x44);
-    assert(qb_sgm41600_voltage_registers(4301, &bat_ovp,
+    assert(qb_sgm41600_voltage_registers(4350, &bat_ovp,
+                                         &regulation) == 4350);
+    assert(bat_ovp == 0x90 && regulation == 0x44);
+    assert(qb_sgm41600_voltage_registers(4351, &bat_ovp,
                                          &regulation) == -1);
     assert(qb_sgm41600_voltage_registers(3799, &bat_ovp,
                                          &regulation) == -1);
@@ -620,9 +629,22 @@ static void test_charge_voltage_limit(void)
     assert(fp != NULL);
     fputs("Reg[04] = 0x88\nReg[05] = 0xaf\n", fp);
     fclose(fp);
+    assert(qb_read_register_pair(directory, 0x04, &first_register,
+                                 0x05, &second_register) == 0);
+    assert(first_register == 0x88 && second_register == 0xaf);
     assert(qb_update_register(directory, 0x05, 0x80, 0) == 0);
     assert(qb_read_str(directory, "registers", value, sizeof(value)) > 0);
     assert(strcmp(value, "0x05 0x2f") == 0);
+    assert(unlink(path) == 0);
+    snprintf(path, sizeof(path), "%sinterrupts", directory);
+    fp = fopen(path, "w");
+    assert(fp != NULL);
+    fputs("151: 7 3 0 0 msmgpio 19 Edge 2-006f\n", fp);
+    fclose(fp);
+    assert(qb_read_irq_count(path, QB_SGM41600_IRQ_LABEL,
+                             &irq_count) == 0);
+    assert(irq_count == 10);
+    assert(qb_read_irq_count(path, "missing-device", &irq_count) == -1);
     assert(unlink(path) == 0);
     assert(rmdir(directory) == 0);
 }
@@ -754,7 +776,7 @@ static void test_bounded_pps_ceiling(void)
     cm.full_voltage_mv = 4100;
     cm.charge_current_ma = 5300;
     assert(qb_pump_control_target_mv(&cm) == 4100);
-    assert(qb_pump_regulation_target_mv(&cm) == 4200);
+    assert(qb_pump_regulation_target_mv(&cm) == 4150);
     cm.pump.vbat_adc_mv = 4022;
     cm.pump.ibat_adc_ma = 0;
     cm.pump.ibus_adc_ma = 1;
@@ -817,13 +839,27 @@ static void test_bounded_pps_ceiling(void)
     cm.pump.vbat_adc_mv = 4000;
     cm.pump.ibat_adc_ma = 0;
     cm.pump.ibus_adc_ma = 1;
-    assert(qb_pump_target_mv(&cm) == 4200);
-    assert(qb_pump_regulation_target_mv(&cm) == 4300);
-    assert(qb_pump_entry_voltage_ok(&cm, 4099));
-    assert(!qb_pump_entry_voltage_ok(&cm, 4100));
+    assert(qb_pump_target_mv(&cm) == 4300);
+    assert(qb_pump_regulation_target_mv(&cm) == 4350);
+    assert(qb_pump_entry_voltage_ok(&cm, 4199));
+    assert(!qb_pump_entry_voltage_ok(&cm, 4200));
     cm.pps_voltage_mv = 9500;
     qb_pump_pps_control(&cm);
-    assert(cm.pps_voltage_mv == 9240);
+    assert(cm.pps_voltage_mv == 9460);
+    assert(qb_pump_regulation_retreat(&cm));
+    assert(cm.pps_voltage_mv == 9440);
+    assert(cm.pump_pps_ceiling_mv == 9440);
+    assert(cm.pump_regulation_steps == 1);
+    assert(cm.pump_regulation_retreating);
+    cm.pump.vbat_adc_mv = 4000;
+    qb_pump_pps_control(&cm);
+    assert(cm.pps_voltage_mv == 9440);
+    assert(qb_pump_regulation_retreat(&cm));
+    assert(qb_pump_regulation_retreat(&cm));
+    assert(qb_pump_regulation_retreat(&cm));
+    assert(qb_pump_regulation_retreat(&cm));
+    assert(cm.pps_voltage_mv == 9360);
+    assert(!qb_pump_regulation_retreat(&cm));
 }
 
 static void test_fixed_charge_ramp(void)
@@ -913,8 +949,8 @@ static void test_pump_eligibility(void)
     cm.temp_status = QB_TEMP_NORMAL;
 
     assert(qb_pump_allowed(&cm, &cm.pdb, 3700));
-    assert(qb_pump_entry_voltage_ok(&cm, 4099));
-    assert(!qb_pump_entry_voltage_ok(&cm, 4100));
+    assert(qb_pump_entry_voltage_ok(&cm, 4199));
+    assert(!qb_pump_entry_voltage_ok(&cm, 4200));
     cm.max_pd_vbus_mv = 0;
     assert(!qb_pump_allowed(&cm, &cm.pdb, 3700));
     cm.max_pd_vbus_mv = QB_STOCK_MAX_PPS_VOLTAGE_MV;
@@ -957,11 +993,11 @@ static void test_pump_handoff_policy(void)
 
     cm.charge_limit_mv = 0;
     cm.full_voltage_mv = 4400;
-    cm.pump.vbat_adc_mv = 4175;
-    cm.pump.ibat_adc_ma = 2001;
+    cm.pump.vbat_adc_mv = 4275;
+    cm.pump.ibat_adc_ma = 1501;
     assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
     assert(cm.pdb.pump_handoff_samples == 0);
-    cm.pump.ibat_adc_ma = 2000;
+    cm.pump.ibat_adc_ma = 1500;
     assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
     assert(cm.pdb.pump_handoff_samples == 1);
     assert(qb_pump_handoff_ready(&cm, &cm.pdb));
@@ -969,6 +1005,7 @@ static void test_pump_handoff_policy(void)
 
     cm.charge_limit_mv = 4200;
     cm.full_voltage_mv = 4200;
+    cm.pump.vbat_adc_mv = 4175;
     cm.pump.ibat_adc_ma = 1501;
     assert(!qb_pump_handoff_ready(&cm, &cm.pdb));
     cm.pump.ibat_adc_ma = 1500;

@@ -70,6 +70,21 @@ bool qb_queue_dequeue(struct qb_manager *cm, char out[QB_EVENT_SIZE])
     return ok;
 }
 
+int qb_interruptible_sleep_ms(struct qb_manager *cm, unsigned milliseconds)
+{
+    while (milliseconds) {
+        unsigned interval_ms = milliseconds > 100 ? 100 : milliseconds;
+
+        usleep(interval_ms * 1000);
+        milliseconds -= interval_ms;
+        if (!qb_queue_empty(cm)) {
+            QBLOG(0x12e, "%s", "stop sleep ,deal with quecue\n");
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int qb_interruptible_sleep(struct qb_manager *cm, unsigned seconds)
 {
     for (unsigned i = 0; i < seconds * 10; i++) {

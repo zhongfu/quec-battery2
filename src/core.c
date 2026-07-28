@@ -42,9 +42,9 @@ int qb_pump_start_voltage_mv(const struct qb_manager *cm, int battery_mv)
 int qb_pump_target_mv(const struct qb_manager *cm)
 {
     if (cm->full_voltage_mv > 0 &&
-        cm->full_voltage_mv < QB_STOCK_PD_FULL_MV)
+        cm->full_voltage_mv < QB_PUMP_MAX_TARGET_MV)
         return cm->full_voltage_mv;
-    return QB_STOCK_PD_FULL_MV;
+    return QB_PUMP_MAX_TARGET_MV;
 }
 int qb_pump_control_target_mv(const struct qb_manager *cm)
 {
@@ -63,12 +63,10 @@ bool qb_pump_handoff_ready(struct qb_manager *cm, struct qb_pd_port *port)
 {
     int vbat = cm->pump.vbat_adc_mv;
     int target_mv = qb_pump_target_mv(cm);
-    int handoff_current_ma =
-        cm->full_voltage_mv > QB_STOCK_PD_FULL_MV ?
-        QB_PUMP_HIGH_TARGET_HANDOFF_CURRENT_MA :
-        QB_PUMP_HANDOFF_CURRENT_MA;
+    int handoff_current_ma = QB_PUMP_HANDOFF_CURRENT_MA;
 
-    if (vbat >= target_mv + QB_PUMP_HANDOFF_OVERSHOOT_MV) {
+    if (!cm->pump_regulation_steps &&
+        vbat >= target_mv + QB_PUMP_HANDOFF_OVERSHOOT_MV) {
         port->pump_handoff_samples = 0;
         return true;
     }
@@ -83,6 +81,24 @@ bool qb_pump_handoff_ready(struct qb_manager *cm, struct qb_pd_port *port)
     return true;
 }
 
+bool qb_pump_regulation_retreat(struct qb_manager *cm)
+{
+    int next;
+
+    if (cm->pump_regulation_steps >= QB_PUMP_REGULATION_MAX_STEPS)
+        return false;
+    next = qb_limit_pps_voltage(
+        cm, cm->pps_voltage_mv - QB_PPS_VOLTAGE_STEP_MV);
+    if (next >= cm->pps_voltage_mv)
+        return false;
+    cm->pps_voltage_mv = next;
+    cm->pump_pps_ceiling_mv = next;
+    cm->pump_regulation_steps++;
+    cm->pump_regulation_clear_samples = 0;
+    cm->pump_regulation_retreating = true;
+    return true;
+}
+
 void qb_pump_pps_control(struct qb_manager *cm)
 {
     int vbat = cm->pump.vbat_adc_mv;
@@ -94,6 +110,9 @@ void qb_pump_pps_control(struct qb_manager *cm)
         vbat < target_mv + QB_PUMP_LIMIT_FINE_WINDOW_MV;
     int bounded_ceiling_mv =
         target_mv * QB_PUMP_LIMIT_RATIO_PERCENT / 100;
+    if (cm->pump_pps_ceiling_mv > 0 &&
+        cm->pump_pps_ceiling_mv < bounded_ceiling_mv)
+        bounded_ceiling_mv = cm->pump_pps_ceiling_mv;
 
     if (vbat < target_mv - QB_PUMP_CV_LOWER_MARGIN_MV &&
         cm->pump.ibat_adc_ma < cm->charge_current_ma - 300) {

@@ -100,6 +100,81 @@ int qb_write_int(const char *dir, const char *attr, int value)
     return qb_write_str(dir, attr, buf);
 }
 
+int qb_read_register_pair(const char *dir,
+                          unsigned first_reg, unsigned *first_value,
+                          unsigned second_reg, unsigned *second_value)
+{
+    char dump[1024];
+    char *line;
+    char *saveptr = NULL;
+    unsigned found_reg;
+    unsigned found_value;
+    bool found_first = false;
+    bool found_second = false;
+
+    if (!first_value || !second_value ||
+        qb_read_str(dir, "registers", dump, sizeof(dump)) < 0)
+        return -1;
+    for (line = strtok_r(dump, "\n", &saveptr); line;
+         line = strtok_r(NULL, "\n", &saveptr)) {
+        if (sscanf(line, "Reg[%x] = 0x%x",
+                   &found_reg, &found_value) != 2 ||
+            found_value > 0xff)
+            continue;
+        if (found_reg == first_reg) {
+            *first_value = found_value;
+            found_first = true;
+        }
+        if (found_reg == second_reg) {
+            *second_value = found_value;
+            found_second = true;
+        }
+    }
+    return found_first && found_second ? 0 : -1;
+}
+
+int qb_read_irq_count(const char *path, const char *label,
+                      unsigned long long *count)
+{
+    FILE *fp;
+    char line[512];
+
+    if (!path || !label || !count || !(fp = fopen(path, "r")))
+        return -1;
+    while (fgets(line, sizeof(line), fp)) {
+        char *cursor;
+        char *end;
+        unsigned long long total = 0;
+        bool found_count = false;
+
+        if (!strstr(line, label) || !(cursor = strchr(line, ':')))
+            continue;
+        cursor++;
+        for (;;) {
+            unsigned long long value;
+
+            errno = 0;
+            value = strtoull(cursor, &end, 10);
+            if (end == cursor || errno == ERANGE)
+                break;
+            if (ULLONG_MAX - total < value) {
+                fclose(fp);
+                return -1;
+            }
+            total += value;
+            found_count = true;
+            cursor = end;
+        }
+        fclose(fp);
+        if (!found_count)
+            return -1;
+        *count = total;
+        return 0;
+    }
+    fclose(fp);
+    return -1;
+}
+
 int qb_update_register(const char *dir, unsigned reg, unsigned mask,
                        unsigned value)
 {
