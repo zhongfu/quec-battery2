@@ -75,6 +75,11 @@ Because `postrm` also runs during an upgrade, it must skip the restore step for
 the `upgrade` argument. Otherwise it would delete the live symlink and consume
 the saved stock binary.
 
+The daemon ignores `SIGTERM`. `charge.init stop` returns before procd sends
+`SIGKILL` (after its 5 s timeout). Each script that stops the daemon therefore
+waits for the process to exit. Without this wait, a restart command is a no-op
+and the old binary keeps running from a deleted file.
+
 ## Install and remove
 
 ```sh

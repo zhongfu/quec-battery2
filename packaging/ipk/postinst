@@ -10,6 +10,15 @@ ln -sf quec_battery2 /usr/bin/quec_battery
 if [ -x /etc/init.d/charge.init ]; then
 	/etc/init.d/charge.init enable >/dev/null 2>&1 || true
 	/etc/init.d/charge.init stop >/dev/null 2>&1 || true
+
+	# The daemon ignores SIGTERM; procd sends SIGKILL after its 5 s timeout.
+	# Wait for the old instance to exit, or start would be a no-op.
+	i=0
+	while [ -n "$(pidof quec_battery)" ] && [ "$i" -lt 12 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+
 	/etc/init.d/charge.init start >/dev/null 2>&1 || true
 fi
 
