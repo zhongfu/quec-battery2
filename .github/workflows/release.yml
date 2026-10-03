@@ -22,7 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     container:
+      # The image sets USER buildbot (uid 1000); the runner's mounted work
+      # directories belong to another uid, so actions/checkout cannot write
+      # its state file. Run the container as root.
       image: ghcr.io/openwrt/sdk:aarch64_cortex-a53-23.05.4
+      options: --user root
     env:
       STAGING_DIR: /builder/staging_dir
       CROSS_CC: /builder/staging_dir/toolchain-aarch64_cortex-a53_gcc-12.3.0_musl/bin/aarch64-openwrt-linux-musl-gcc
