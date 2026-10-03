@@ -2,4 +2,3 @@
 *.o
 /tests/behavior_test
 /dist/
-/.toolchain/

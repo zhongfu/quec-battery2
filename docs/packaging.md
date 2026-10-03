@@ -23,8 +23,9 @@ architecture is `aarch64_cortex-a53`.
 The `.ipk` is a gzip tar archive. It contains `debian-binary`,
 `control.tar.gz`, and `data.tar.gz`. GNU tar is required.
 
-A prebuilt aarch64 musl toolchain is available from musl.cc. The release
-workflow uses `https://more.musl.cc/x86_64-linux-musl/aarch64-linux-musl-cross.tgz`.
+The release workflow builds inside the official OpenWrt SDK container
+`ghcr.io/openwrt/sdk:aarch64_cortex-a53-23.05.4`. It matches the Mudi 7 target
+(GCC 12.3.0, OpenWrt revision `r24012`), and needs no toolchain download.
 
 ## Package contents
 

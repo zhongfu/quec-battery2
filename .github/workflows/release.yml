@@ -21,35 +21,23 @@ jobs:
   package:
     runs-on: ubuntu-latest
     needs: test
+    container:
+      image: ghcr.io/openwrt/sdk:aarch64_cortex-a53-23.05.4
+    env:
+      STAGING_DIR: /builder/staging_dir
+      CROSS_CC: /builder/staging_dir/toolchain-aarch64_cortex-a53_gcc-12.3.0_musl/bin/aarch64-openwrt-linux-musl-gcc
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Cache aarch64 musl cross toolchain
-        id: toolchain
-        uses: actions/cache@v4
-        with:
-          path: .toolchain
-          key: musl-cross-aarch64-gcc11.2.1
-
-      - name: Download aarch64 musl cross toolchain
-        if: steps.toolchain.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p .toolchain
-          curl -fsSL -o /tmp/tc.tgz https://more.musl.cc/x86_64-linux-musl/aarch64-linux-musl-cross.tgz
-          tar -C .toolchain -xzf /tmp/tc.tgz
-          .toolchain/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc --version
-
-      - name: Cross-compile for aarch64 musl
-        run: |
-          make clean
-          make CC="$PWD/.toolchain/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc"
-          file quec_battery
 
       - name: Set package version from tag
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile for aarch64 musl
+        run: |
+          make clean
+          make CC="$CROSS_CC"
+          file quec_battery
 
       - name: Build .ipk
         run: |
