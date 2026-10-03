@@ -1,0 +1,81 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host build and behavior tests
+        run: |
+          make clean
+          make test
+
+  package:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache aarch64 musl cross toolchain
+        id: toolchain
+        uses: actions/cache@v4
+        with:
+          path: .toolchain
+          key: musl-cross-aarch64-gcc11.2.1
+
+      - name: Download aarch64 musl cross toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .toolchain
+          curl -fsSL -o /tmp/tc.tgz https://more.musl.cc/x86_64-linux-musl/aarch64-linux-musl-cross.tgz
+          tar -C .toolchain -xzf /tmp/tc.tgz
+          .toolchain/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc --version
+
+      - name: Cross-compile for aarch64 musl
+        run: |
+          make clean
+          make CC="$PWD/.toolchain/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc"
+          file quec_battery
+
+      - name: Determine package version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build .ipk
+        run: |
+          VERSION='${{ steps.version.outputs.version }}' \
+            ARCH=aarch64_cortex-a53 \
+            ./packaging/build-ipk.sh
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quec-battery2-${{ steps.version.outputs.version }}
+          path: |
+            quec_battery
+            dist/*.ipk
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            quec_battery
+            dist/*.ipk
