@@ -8,8 +8,9 @@ OBJECTS := $(SOURCES:.c=.o)
 TARGET := quec_battery
 TEST_SOURCES := $(filter-out src/main.c,$(SOURCES))
 TEST_TARGET := tests/behavior_test
+ARCH ?= aarch64_cortex-a53
 
-.PHONY: all clean test
+.PHONY: all clean test ipk
 
 all: $(TARGET)
 
@@ -24,6 +25,11 @@ test: $(TEST_TARGET)
 
 $(TEST_TARGET): tests/behavior.c $(TEST_SOURCES) src/qb.h
 	$(CC) $(CFLAGS) -Isrc tests/behavior.c $(TEST_SOURCES) $(LDFLAGS) -o $@
+
+# Package the already-built target binary. Cross-compile first, e.g.
+#   make clean && make CC=aarch64-linux-musl-gcc && make ipk
+ipk: $(TARGET)
+	ARCH=$(ARCH) VERSION=$(VERSION) ./packaging/build-ipk.sh
 
 clean:
 	rm -f $(OBJECTS) $(TARGET) $(TEST_TARGET)

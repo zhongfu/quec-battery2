@@ -1,0 +1,9 @@
+Package: @PKG@
+Version: @VERSION@
+Depends: libc
+Architecture: @ARCH@
+Section: utils
+Priority: optional
+Maintainer: @MAINTAINER@
+Installed-Size: @SIZE@
+Description: Behavioral reimplementation of the GL.iNet/Quectel quec_battery charging daemon. Installs /usr/bin/quec_battery2 and redirects the live /usr/bin/quec_battery path to it, preserving the stock binary as /usr/bin/quec_battery.stock.

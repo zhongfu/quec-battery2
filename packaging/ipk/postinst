@@ -1,0 +1,16 @@
+#!/bin/sh
+# opkg postinst: runs AFTER the payload is unpacked.
+#
+# Point the live daemon path at the packaged binary and (re)start the stock init
+# script, which invokes /usr/bin/quec_battery. The symlink keeps the live path in
+# sync with upgrades of /usr/bin/quec_battery2.
+
+ln -sf quec_battery2 /usr/bin/quec_battery
+
+if [ -x /etc/init.d/charge.init ]; then
+	/etc/init.d/charge.init enable >/dev/null 2>&1 || true
+	/etc/init.d/charge.init stop >/dev/null 2>&1 || true
+	/etc/init.d/charge.init start >/dev/null 2>&1 || true
+fi
+
+exit 0

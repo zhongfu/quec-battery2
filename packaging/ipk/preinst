@@ -1,0 +1,17 @@
+#!/bin/sh
+# opkg preinst: runs BEFORE the package payload is unpacked.
+#
+# The stock daemon is moved aside exactly once, so upgrades never overwrite the
+# saved stock binary with a previous replacement. The live path
+# /usr/bin/quec_battery is created by postinst (not shipped by this package),
+# which is why opkg never sees a file clash with the vendor quec_battery package.
+
+if [ -x /etc/init.d/charge.init ]; then
+	/etc/init.d/charge.init stop >/dev/null 2>&1 || true
+fi
+
+if [ -e /usr/bin/quec_battery ] && [ ! -e /usr/bin/quec_battery.stock ]; then
+	mv /usr/bin/quec_battery /usr/bin/quec_battery.stock
+fi
+
+exit 0

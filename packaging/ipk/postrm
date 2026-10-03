@@ -1,0 +1,25 @@
+#!/bin/sh
+# opkg postrm: runs AFTER the package payload is removed.
+#
+# On removal, drop the live symlink and restore the stock daemon saved by
+# preinst. On upgrade, leave the swap in place: the new postinst recreates the
+# symlink against the freshly unpacked binary and the saved stock binary must
+# stay untouched for a future removal.
+
+case "$1" in
+	upgrade|failed-upgrade)
+		exit 0
+		;;
+esac
+
+rm -f /usr/bin/quec_battery
+
+if [ -e /usr/bin/quec_battery.stock ]; then
+	mv -f /usr/bin/quec_battery.stock /usr/bin/quec_battery
+fi
+
+if [ -x /etc/init.d/charge.init ]; then
+	/etc/init.d/charge.init start >/dev/null 2>&1 || true
+fi
+
+exit 0
