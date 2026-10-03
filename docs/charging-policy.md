@@ -1,0 +1,210 @@
+# Charging policy
+
+## Bounded charging configuration
+
+This fork makes the stock charging settings and configurable final battery
+ceiling in `/etc/config/qlbattery` effective. They are read once at startup from
+the `settings` section:
+
+| Option | Fallback | Effective range | Policy |
+| --- | ---: | ---: | --- |
+| `max_current_ma` | 5300 mA | 0–5300 mA | Caps every thermal charging-current result; `0` disables buck and pump charging |
+| `min_shutdown_mv` | 3400 mV | 3400–3800 mV | Sets the no-adapter low-voltage shutdown threshold |
+| `max_pd_vbus_mv` | 9800 mV | 0–9800 mV | Caps every PPS voltage request; values below 6600 mV disable PPS |
+| `charge_limit_mv` | 0 (stock policy) | 0, or 3800–4400 mV | Caps the final SGM41542S CV target; `0` uses the temperature- and cycle-derived stock ceiling |
+| `charge_limit_percent` | 0 (disabled) | 0 (disabled), or 1–100% | Holds battery charge current at zero after three samples at the limit; resumes after three samples at least three percentage points lower |
+
+Configuration values are base-10 integers in the units shown above. A malformed
+integer is ignored, leaving the prior/default value in effect. Detailed logging
+reports both the raw and effective value when `/tmp/quec_battery_log` exists.
+Voltage ceilings are rounded downward to representable 10 mV SGM41542S steps.
+The exact normalization rules for the two optional charge limits are:
+
+| Raw value | Effective `charge_limit_mv` |
+| ---: | ---: |
+| less than 0 | 0 (stock policy) |
+| 0 | 0 (stock policy) |
+| 1–3799 mV | 3800 mV |
+| 3800–4399 mV | rounded down to a 10 mV step |
+| 4400 mV | 4400 mV |
+| greater than 4400 mV | 4400 mV |
+
+| Raw value | Effective `charge_limit_percent` |
+| ---: | ---: |
+| less than 0 | 0 (disabled) |
+| 0 | 0 (disabled) |
+| 1–100% | unchanged |
+| greater than 100% | 100% |
+
+These bounds keep current and PPS voltage within the recovered stock maxima and
+prevent shutdown below the stock floor. A positive `charge_limit_mv` can only
+tighten the temperature- and cycle-derived final battery ceiling; 4400 mV and
+the normal-policy value `0` are therefore equivalent under ordinary conditions.
+
+The daemon separates the final battery ceiling from the charge-pump endpoint.
+The final SGM41542S target is the minimum of the configured, thermal, and
+cycle-aging ceilings. The PPS target is the lower of that final target and
+4300 mV. Thus a normal `0` or 4400 mV configuration uses PPS through 4300 mV,
+then uses the SGM41542S to complete charging to 4400 mV.
+
+The 3800 mV active floor is retained from the SGM41600 charge-pump policy.
+The daemon places the pump's hardware `VBAT_REG` point 50 mV above the
+effective software target, capped at 4350 mV, and places `BAT_OVP` another
+50 mV higher. At the 3800 mV floor this yields a 3850 mV regulation point and
+a 4000 mV `BAT_OVP` threshold because 4000 mV is the chip's minimum encodable
+OVP value. Pump register targets are rounded downward to 25 mV steps.
+The SGM41542S buck charger itself supports lower `VREG` values, down to
+3500 mV in 10 mV steps, but this daemon does not interpret a sub-3800 mV
+setting as a request for buck-only charging. Any positive value below 3800 mV
+is clamped to 3800 mV instead.
+
+For every PPS session, mode selection requires the battery to be at least
+100 mV below the effective PPS target before the charge pump is eligible.
+Inside that final 100 mV window the buck path is selected directly. This avoids
+starting the SGM41600 in its `VBAT_REG` region, where the rapidly falling input
+current can trigger `IBUS_UCP` and reset divider mode.
+
+When PPS charging begins below that window, the daemon starts at 2.2 times the
+measured battery voltage. This preserves the recovered stock startup ratio and
+provides enough voltage headroom for input current to cross the SGM41600's
+programmed under-current threshold despite cable and board-path voltage drop.
+After divider mode is confirmed, the daemon retains the recovered 100 mV
+approach steps until the battery enters the final 100 mV around the PPS target.
+Inside the window it uses protocol-native 20 mV PPS steps.
+It does not raise PPS while pump `vbat_adc` is in the asymmetric dead zone from
+25 mV below the target through the target, and lowers PPS whenever that ADC is
+above the target. Requests remain capped at 2.2 times the effective
+battery-voltage target. A battery voltage at least 100 mV above the target
+restores a 100 mV retreat.
+
+For every PPS session, two consecutive pump samples at or above 25 mV below
+the PPS target initiate a clean handoff to the SGM41542S once pump battery
+current is at or below 1500 mA. The first qualifying sample suppresses only
+that pass's PPS adjustment; it does not create a persistent voltage hold.
+A reading 50 mV above the PPS target initiates handoff immediately unless an
+active hardware-regulation retreat has already established a lower session
+PPS ceiling.
+
+The SGM41600 interrupt is owned by the kernel driver and has no pollable
+userspace event interface. The daemon therefore watches the pump's
+`2-006f` counter in `/proc/interrupts`, which avoids continuous I2C register
+reads. When the counter changes, it reads `REG0B` and `REG0D`. A
+`VBAT_REG_FLAG` starts a temporary 250 ms observation cadence and lowers PPS
+in native 20 mV steps until two post-settlement samples no longer report
+regulation. The first released voltage is retained as the PPS ceiling for the
+rest of that pump session. Five unsuccessful steps or any `VDRP_OVP_FLAG`
+causes the conservative buck fallback.
+
+The daemon pre-programs the buck voltage and termination state, disables the
+pump, and verifies that its converter is off before enabling the SGM41542S at a
+conservative 300 mA. It then requests the highest advertised fixed PDO
+directly—12 V, 9 V, or 5 V—without an intermediate 5 V reset and continues the
+normal buck-current ramp toward the active thermal/current ceiling. The
+SGM41542S transitions from constant current to constant voltage at the final
+target and tapers charge current in hardware. The selected port is latched to
+buck charging until that cable detaches.
+
+This avoids overlapping the two battery-charging converters and prevents
+prolonged SGM41600 `VBAT_REG` operation, which can increase the external OVPFET
+voltage drop enough to trip `VDRP_OVP`. If pump shutdown cannot be confirmed,
+the buck remains disabled and PD is returned to 5 V. Pump startup, telemetry,
+capability, and protection failures use the conservative 5 V electrical
+fallback without being classified as a completed charge handoff.
+
+For example, a 4.00 V ceiling combined with an 80% capacity limit:
+
+```uci
+config quec_battery_configs 'settings'
+	option charge_limit_mv '4000'
+	option charge_limit_percent '80'
+```
+
+The daemon explicitly enables SGM41542S hardware termination whenever it
+programs the buck voltage, including after a limited-PPS handoff. The hardware
+termination-current setting is otherwise left intact; its reset value is
+180 mA. The daemon programs constant-charge voltage through the readable vendor
+`vreg` attribute, using the active minimum of the configured, thermal, and
+cycle-aging limits. The standard power-supply `constant_charge_voltage`
+attribute writes the same hardware register on this target, but its read method
+always reports zero. The daemon therefore verifies the setting through `vreg`
+and reapplies it if the charger register drifts or resets. For PPS charging it
+programs SGM41600 `VBAT_REG` 100 mV above the software target, capped at
+4300 mV, and normally places `BAT_OVP` another 50 mV higher. It also disables
+the 650 ms regulation timeout. SGM41600 regulation is quantized downward to its
+25 mV protection steps; the SGM41542S uses its 10 mV CV steps.
+
+PPS feedback, fine adjustment, and handoff decisions use the SGM41600
+`vbat_adc` reading. The `vbat:` field in the gauge-monitor log is instead the
+SGM41542S ADC reading, while the CW2217 reports a third value through
+`voltage_now`. Those ADCs can have different fixed offsets, so the logged
+SGM41542S value alone does not show that PPS exceeded the configured limit.
+
+The capacity limit is evaluated only from complete, range-checked gauge
+snapshots. Three consecutive samples are required both to enter the hold and
+to resume, with a fixed three-percentage-point hysteresis. Entering the hold
+disables the charge pump, returns PD to 5 V, and leaves the SGM41542S input
+power path available for the system while battery charging is disabled. The
+voltage and capacity limits compose independently; whichever becomes
+restrictive first controls battery current.
+
+## Enhanced safety behavior
+
+### PD capability validation
+
+PD capability lines must contain positive voltage and current values, a
+non-reversed voltage range, recognized units, and no trailing data other than
+the controller's `<-` selection marker. Fractional volts and amps are preserved
+as millivolts and milliamps instead of being truncated. Invalid capabilities do
+not enter the port inventory and cannot mark a source as PPS-capable.
+
+### PPS contract gating
+
+PDO requests now report matching, write, and refresh failures. The SGM41600
+remains disabled until the requested PPS voltage is observed on its VBUS ADC
+within 700 mV and the Type-C controller still reports a PPS-capable sink.
+Failure at initial negotiation or during a later voltage adjustment disables
+the pump and falls back to the port's 5 V buck path. This uses the one-second
+settling delay already present in the stock sequence; it adds no new delay.
+
+### Fixed-current floor
+
+The SGM41542S current ramp is constrained to the inclusive range from zero to
+the active policy current. Repeated VBUS droop can reduce charging to the
+device-supported zero-current setting, but can no longer generate negative
+`ichrg_curr` writes.
+
+### Telemetry validity
+
+Charger, charge-pump, and gauge samples are assembled as complete snapshots;
+failed or malformed reads no longer partially update live policy state. A Type-C
+power-role read failure produces `UNKNOWN`, never an assumed sink. Buck and pump
+monitors require fresh valid charger, battery, and port telemetry and leave the
+active charging path on a failed refresh. Consecutive-failure counters reset
+only after a complete sample succeeds.
+
+### Watchdog reconnection
+
+The watchdog configuration is checked before opening a socket. Each connection
+attempt creates a new close-on-exec socket and completes nonblocking
+`EINPROGRESS` with `poll()` and `SO_ERROR`. A lost heartbeat connection is
+closed and re-established without reusing the descriptor; ten failed connection
+attempts, a charger watchdog fault, or ten consecutive feed/read failures
+request a reboot. Signal ownership remains in `main` instead of being replaced
+by the worker thread.
+
+### Startup thermal ceiling
+
+Startup now retains the stricter of the temperature voltage ceiling and the
+cycle-aging ceiling, using the same minimum-of-limits rule as steady-state
+policy. A hot battery therefore starts at 4180 mV rather than being temporarily
+overwritten by a 4400 mV low-cycle ceiling.
+
+### Battery-presence normalization
+
+The gauge `present` value is normalized to `unknown`, `absent`, or `present`.
+Only the exact value `1` permits charging. A read failure or malformed value
+disables the charge paths without being mistaken for battery-free operation.
+The exact value `0` retains the stock battery-free power path: the daemon
+negotiates an input source and configures input current, but does not enable
+battery charging.
+
